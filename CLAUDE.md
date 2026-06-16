@@ -56,13 +56,23 @@ All docs live in `docs/`. Requirements are numbered for linear reading (`docs/N-
 
 - `docs/1-overview.md` — problem statement, goals, non-goals, glossary
 - `docs/2-data-migration.md` — the app-driven data-only path (the v1 core)
-- `docs/3-schema-reconstruction.md` — deferred standalone/DDL-reconstruction mode
+- `docs/3-schema-reconstruction.md` — deferred standalone/DDL-reconstruction mode (overview)
 - `docs/4-cli.md` — the `pglite-migrate` bin
-- `docs/5-safety-and-rollback.md` — atomic swap, backups, dry-run, validation
+- `docs/5-safety-and-rollback.md` — safety umbrella: atomic swap, backups, dry-run, validation
 - `docs/6-testing.md` — unit + two-version e2e harness, the npm-alias matrix
+- `docs/7-copy-text-transfer.md` — detailed spec: COPY-text fidelity path (NFR-2.15)
+- `docs/8-fk-cycle-deferred-constraints.md` — detailed spec: cyclic transfer via deferred constraints
+- `docs/9-standalone-schema-reconstruction.md` — detailed spec: the no-host-app DDL path (expands doc 3)
+- `docs/10-backup.md` — detailed spec: source-dir backup (FR-5.1)
+- `docs/11-atomic-swap.md` — detailed spec: write-new-then-rename swap (FR-5.2)
+- `docs/12-dry-run.md` — detailed spec: read-only plan/report (FR-5.3)
+- `docs/13-post-migration-validation.md` — detailed spec: validation that gates the swap (FR-5.4)
+- `docs/14-idempotence.md` — detailed spec: re-run safety (FR-5.6)
 - `docs/ARCHITECTURE.md` — components and data flow
 - `docs/ai/code-summary.md` — codebase map + "where do I look to…" index
 - `docs/ai/requirements-summary.md` — synthesized requirements view with status markers
+
+Docs 7–14 are **detailed, design-only specs** for deferred capabilities; docs 1–6 remain the high-level overview. Keep both in sync when implementing.
 
 **When making changes, keep docs in sync** — update the relevant requirements doc and both AI summaries in the same pass.
 

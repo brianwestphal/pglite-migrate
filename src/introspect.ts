@@ -57,14 +57,21 @@ async function introspectColumns(
 }
 
 async function introspectForeignKeys(db: PGliteLike): Promise<ForeignKey[]> {
+  // Build qualified `schema.name` edges by joining the catalogs explicitly.
+  // `regclass::text` would be search-path-sensitive (it drops the schema for
+  // public), which would stop the edges from matching the always-qualified
+  // table keys used in topologicalSort.
   const { rows } = await db.query<{ child: string; parent: string }>(
-    `SELECT con.conrelid::regclass::text AS child,
-            con.confrelid::regclass::text AS parent
+    `SELECT cn.nspname || '.' || cc.relname AS child,
+            pn.nspname || '.' || pc.relname AS parent
        FROM pg_constraint con
-       JOIN pg_namespace n ON n.oid = con.connamespace
+       JOIN pg_class cc ON cc.oid = con.conrelid
+       JOIN pg_namespace cn ON cn.oid = cc.relnamespace
+       JOIN pg_class pc ON pc.oid = con.confrelid
+       JOIN pg_namespace pn ON pn.oid = pc.relnamespace
       WHERE con.contype = 'f'
         AND con.conrelid <> con.confrelid
-        AND ${SYSTEM_SCHEMA_FILTER}`,
+        AND ${SYSTEM_SCHEMA_FILTER.replace(/nspname/g, 'cn.nspname')}`,
   );
   return rows.map((r) => ({ child: r.child, parent: r.parent }));
 }

@@ -38,8 +38,8 @@ describe('introspectSchema', () => {
     const schema = await introspectSchema(db);
 
     expect(schema.foreignKeys).toContainEqual({
-      child: 'books',
-      parent: 'authors',
+      child: 'public.books',
+      parent: 'public.authors',
     });
   });
 
