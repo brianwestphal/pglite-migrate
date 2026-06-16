@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage/
+.coverage-tmp/
+.DS_Store
+.hotsheet/
+.glassbox/
+.cursor/
+.claude/settings.local.json
+*.tsbuildinfo
+.claude
+.mcp.json
+
+# Scratch PGlite data directories created by tests / manual runs
+tmp/
+*.pgdata/

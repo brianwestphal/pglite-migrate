@@ -1,0 +1,78 @@
+{
+  "name": "pglite-migrate",
+  "version": "0.0.0",
+  "description": "Migrate PGlite data across PostgreSQL major versions (e.g. PG17 -> PG18) by transferring data between two PGlite instances, without native binaries or pg_upgrade.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Brian Westphal",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brianwestphal/pglite-migrate"
+  },
+  "keywords": [
+    "pglite",
+    "postgres",
+    "postgresql",
+    "migration",
+    "upgrade",
+    "pg_upgrade",
+    "embedded",
+    "wasm",
+    "database"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "pglite-migrate": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/*.map"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:all": "vitest run --coverage && vitest run --config vitest.e2e.config.ts",
+    "lint": "eslint src/ tests/",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist coverage node_modules/.cache",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@electric-sql/pglite": ">=0.4.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.2",
+    "pglite-old": "npm:@electric-sql/pglite@0.5.2",
+    "pglite-new": "npm:@electric-sql/pglite@0.5.2",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.9.3",
+    "@vitest/coverage-v8": "^4.1.9",
+    "eslint": "^10.5.0",
+    "eslint-plugin-import-x": "^4.16.2",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "eslint-plugin-tsdoc": "^0.5.2",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.61.1",
+    "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
+  }
+}
