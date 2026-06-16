@@ -108,6 +108,28 @@ describe('introspectSchema (edge cases)', () => {
     expect(t?.columns.map((c) => c.name)).toEqual(['id', 'label']);
   });
 
+  it('flags generated (stored) and identity columns', async () => {
+    await db.exec(`
+      CREATE TABLE g (
+        id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        base integer,
+        doubled integer GENERATED ALWAYS AS (base * 2) STORED,
+        plain text
+      );
+    `);
+
+    const schema = await introspectSchema(db);
+    const cols = schema.tables.find((t) => t.name === 'g')?.columns ?? [];
+    const col = (n: string) => cols.find((c) => c.name === n);
+
+    expect(col('id')?.identity).toBe('always');
+    expect(col('id')?.generated).toBe(false);
+    expect(col('doubled')?.generated).toBe(true);
+    expect(col('doubled')?.identity).toBeNull();
+    expect(col('plain')?.generated).toBe(false);
+    expect(col('plain')?.identity).toBeNull();
+  });
+
   it('captures type qualifiers verbatim via format_type', async () => {
     await db.exec(`
       CREATE TABLE typed (

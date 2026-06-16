@@ -13,57 +13,62 @@ src/
   index.ts        Public API barrel — the only import surface for consumers
   types.ts        PGliteLike structural interface + all result/option types (SSOT for shapes)
   ident.ts        SQL identifier/literal quoting helpers
-  introspect.ts   introspectSchema(db): tables, columns, FKs, sequences via catalog SQL
-  transfer.ts     topologicalSort (pure), transferTable, applySequences
-  migrate.ts      migrate(options): orchestrator (introspect → sort → transfer → sequences → report)
+  introspect.ts   introspectSchema(db): tables, columns (+ generated/identity), FKs, sequences via catalog SQL
+  transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback), transferCycle, applySequences
+  migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report
+  validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks
+  backup.ts       backupDataDir(dir): verified, timestamped copy of a data dir (rollback)
+  swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
+  reconstruct.ts  reconstructSchema(source, target): rebuild app-class DDL via pg_get_*def (standalone mode)
   loader.ts       openDataDir(dir, modulePath): open a data dir with a chosen PGlite package/alias
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster
   cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run
 tests/
-  topo.test.ts            Pure unit tests for topologicalSort
-  version.test.ts         Pure unit tests for readClusterVersion (temp PG_VERSION files)
-  ident.test.ts           Pure unit tests for the quoting helpers
-  introspect.test.ts      Introspection against an in-memory PGlite (basic fixture)
-  introspect.edge.test.ts Introspection edge cases (multi-schema, dropped cols, composite/self FK, qualified FK, null-seq, type qualifiers)
-  transfer.test.ts        Unit tests for transferTable + applySequences (in-memory)
-  migrate.test.ts         Orchestrator unit tests (totals, cycle warning, FK ordering, empty schema)
-  loader.test.ts          Unit tests for openDataDir (default engine, alias, bad module)
-  cli.test.ts             parseArgs units + run() integration over real temp data dirs
-  helpers.ts              Shared SCHEMA_SQL + SEED_SQL fixtures
-  e2e/roundtrip.test.ts   Two-version round-trip via pglite-old / pglite-new aliases
-  e2e/fidelity.test.ts    Type-fidelity round-trip (json is it.fails until COPY-text lands)
-  e2e/fk-cycle.test.ts    FK-cycle handling (empty passes; populated is it.fails until deferred constraints)
+  topo / version / ident .test.ts        Pure unit tests
+  introspect(.edge).test.ts              Introspection (basic + edge: multi-schema, dropped/qualified FK/composite, generated/identity, type qualifiers)
+  transfer.test.ts                       transferTable (COPY + INSERT fallback + generated exclusion), applySequences
+  migrate.test.ts                        Orchestrator: totals, FK ordering, cycle handling, validation, onExisting re-run safety, dry-run
+  validate.test.ts                       counts / full-digest / sequence checks
+  backup.test.ts / swap.test.ts          Backup copy+verify; atomic swap + crash-before-swap safety
+  reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
+  loader.test.ts / cli.test.ts           openDataDir; parseArgs + run() over real temp dirs
+  helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
+  e2e/roundtrip / fidelity / fk-cycle / standalone .test.ts   Two-version round-trips (pglite-old/pglite-new aliases)
 docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 ```
 
 ## Public API (`src/index.ts`)
 
-- `migrate(options)` → `MigrationReport` — primary entry point (app-driven, data-only)
-- `introspectSchema(db)` → `SchemaInfo`
-- `topologicalSort(tables, fks)` → `TopoResult`; `transferTable(...)`; `applySequences(...)`
-- `openDataDir(dir, modulePath?)` → `OpenedCluster`
-- `readClusterVersion(dataDir)` → `number`
-- Types: `PGliteLike`, `MigrateOptions`, `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`
+- `migrate(options)` → `MigrationReport` — primary entry point (orchestrator)
+- `planMigration(source, onProgress?)` → `MigrationReport` — dry-run plan (writes nothing)
+- `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target)`
+- `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
+- `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
+- `openDataDir(dir, modulePath?)`, `readClusterVersion(dataDir)`
+- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onExisting`/`dryRun`/`reconstructSchema`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`
 
 ## Key design points
 
-- Core depends on `PGliteLike` (structural), never on `@electric-sql/pglite` — enables two different majors at once. PGlite is a **peer dependency**, external in the tsup build.
-- v1 is **app-driven, data-only**: the target schema is created by the host app; this library transfers data only. No DDL on the target.
-- Catalog queries are version-agnostic (stable relations + `format_type`). FK edges are schema-qualified (`nspname || '.' || relname`, not `regclass::text`) so they match the qualified table keys used in `topologicalSort` — this is the PGLM-20 fix; using `regclass::text` silently dropped public-schema FK edges.
-- Data transfer is row-by-row parameterized `INSERT` (COPY-text fidelity path is deferred).
+- Core depends on `PGliteLike` (structural), never on `@electric-sql/pglite` — enables two different majors at once. PGlite is a **peer dependency**, external in the tsup build. `PGliteLike.query` carries an optional `{ blob }` option/result for COPY.
+- Default path is **app-driven, data-only** (target schema pre-exists); `reconstructSchema: true` adds the **standalone** path that rebuilds app-class DDL first (the only place that does DDL on the target, plus the transient FK-deferrability flip in `transferCycle`).
+- Catalog queries are version-agnostic (stable relations + `format_type`). FK edges are schema-qualified (`nspname || '.' || relname`, not `regclass::text`) so they match the qualified table keys used in `topologicalSort` (PGLM-20 fix).
+- Data transfer is **COPY-text first** (`COPY … TO/FROM '/dev/blob'`, preserves `json`/etc.) with a per-table **row-by-row INSERT fallback**; generated-stored columns are excluded.
+- `migrate` runs validation by default (`counts`), refuses a populated target by default (`onExisting: 'error'`), and never mutates the source.
 
 ## Where do I look to…
 
 - **…change what's introspected** → `src/introspect.ts`
-- **…change insert ordering / cycle handling** → `topologicalSort` in `src/transfer.ts`
-- **…change how rows are copied** (e.g. add COPY-text) → `transferTable` in `src/transfer.ts`
+- **…change insert ordering / cycle handling** → `topologicalSort` / `transferCycle` in `src/transfer.ts`
+- **…change how rows are copied** → `transferTable` (COPY/INSERT) in `src/transfer.ts`
 - **…change sequence handling** → `applySequences` in `src/transfer.ts`
-- **…change the orchestration / report** → `src/migrate.ts`
+- **…change orchestration / dry-run / re-run safety** → `src/migrate.ts`
+- **…change validation** → `src/validate.ts`
+- **…change standalone schema rebuild** → `src/reconstruct.ts`
+- **…change backup / atomic swap** → `src/backup.ts` / `src/swap.ts`
 - **…add a CLI flag** → `src/cli.ts`
-- **…open an engine version / alias** → `src/loader.ts`
-- **…detect the cluster major version** → `src/version.ts`
+- **…open an engine version / alias** → `src/loader.ts`; **…detect major version** → `src/version.ts`
 - **…add/adjust types** → `src/types.ts`
-- **…change the e2e version matrix** → `pglite-old`/`pglite-new` aliases in `package.json` + `tests/e2e/roundtrip.test.ts`
+- **…change the e2e version matrix** → `pglite-old`/`pglite-new` aliases in `package.json`
 
 ## Build / test
 

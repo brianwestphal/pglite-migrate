@@ -1,6 +1,6 @@
 # 9 — Standalone Schema Reconstruction (Detailed Spec)
 
-**Status: design only. Not implemented. Ticket PGLM-3.** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
+**Status: Implemented (PGLM-25; spike PGLM-24).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
 
 ## Motivation / Problem
 
@@ -19,6 +19,16 @@ Before depending on any third-party library, a time-boxed spike must answer one 
   2. **`pg-schema-dump`** — emits `CREATE` SQL. Same question: does it accept an arbitrary query runner, or is it coupled to a `node-postgres` client/connection string?
 - **Decision rule:** adopt a library **only** if it runs against `PGliteLike` (directly or via a trivial adapter) **and** its output respects our scope boundary (or can be filtered to it). If both libraries assume a `pg` client, **hand-roll** the reconstruction with direct catalog SQL plus the `pg_get_*def` functions (the approach below is written to stand on its own without either library). Record the spike outcome in this doc's Open Questions and in PGLM-3.
 - The hand-rolled path is the **expected fallback** and the safe default — it reuses the exact catalog-SQL style already proven in `src/introspect.ts` and depends on nothing but PGlite's own functions.
+
+### Spike outcome (PGLM-24)
+
+**Decision: hand-roll the reconstruction with `pg_get_*def` + catalog SQL. Do not depend on `pg-schema-dump`; optionally adopt `pg-introspection` later only as a typed read layer.**
+
+The empirical library run could not be executed here (the npm registry is not reachable from this sandboxed environment — install returns `EPERM`), so this is a design-level determination from the libraries' published API contracts; revalidate with a live install when network access is available.
+
+- **`pg-schema-dump`** is built around a `node-postgres` connection (connection config / `pg` client) and emits a broad dump. It would need a non-trivial adapter to run against `PGliteLike`, pulls a heavier dependency, and its output does not respect our app-class scope boundary without post-filtering. **Rejected** for v1 (conflicts with `NFR-1.6` peer-dep minimalism and the scope line in `NG-9.x`).
+- **`pg-introspection`** is **driver-agnostic in principle**: it exposes a query-string builder plus a pure parser over the returned JSON, so it could run through `PGliteLike.query` with a thin shim. **But it only reads the catalog — it does not emit DDL.** It would replace part of `introspectSchema`, not the `CREATE` generation that is the actual work here, so adopting it does not remove the hand-rolled DDL emission. Treat as an optional future refactor, not a v1 dependency.
+- **Therefore** the reconstruction engine (PGLM-25) uses Postgres's in-WASM `pg_get_constraintdef` / `pg_get_indexdef` / `pg_get_expr` / `format_type`, exactly as specified below. This is guaranteed to work inside PGlite (same mechanism `src/introspect.ts` already relies on) and adds zero runtime dependencies.
 
 ## Requirements
 

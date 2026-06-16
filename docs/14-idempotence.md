@@ -1,6 +1,6 @@
 # 14 — Idempotence & Resumability
 
-**Status: design only. Not implemented in v1.** This is the detailed spec for the idempotence / re-run-safety requirement (PGLM-8 / FR-5.6) under the safety umbrella in [`5-safety-and-rollback.md`](./5-safety-and-rollback.md). Today a second `migrate` run against a non-empty target double-inserts and almost certainly violates a primary key, so this behavior must be decided and documented before the tool is recommended for production data — file as tickets.
+**Status: Implemented (PGLM-30), default `onExisting: 'error'`.** This is the detailed spec for the idempotence / re-run-safety requirement (PGLM-8 / FR-5.6) under the safety umbrella in [`5-safety-and-rollback.md`](./5-safety-and-rollback.md). Today a second `migrate` run against a non-empty target double-inserts and almost certainly violates a primary key, so this behavior must be decided and documented before the tool is recommended for production data — file as tickets.
 
 ## Motivation / Problem
 

@@ -6,20 +6,38 @@
  * introspection and transfer primitives are exported too, for callers building
  * their own orchestration.
  */
+export { backupDataDir, type BackupOptions } from './backup.js';
 export { introspectSchema } from './introspect.js';
 export { openDataDir, type OpenedCluster } from './loader.js';
-export { migrate } from './migrate.js';
-export { applySequences, topologicalSort, type TopoResult, transferTable } from './transfer.js';
+export { migrate, planMigration } from './migrate.js';
+export { reconstructSchema } from './reconstruct.js';
+export { swapIntoPlace, type SwapOptions, type SwapResult } from './swap.js';
+export {
+  applySequences,
+  topologicalSort,
+  type TopoResult,
+  transferCycle,
+  transferTable,
+} from './transfer.js';
 export type {
   ColumnInfo,
   ForeignKey,
   MigrateOptions,
   MigrationReport,
+  OnExisting,
   PGliteLike,
   ProgressEvent,
+  QueryOptions,
+  ReconstructionReport,
   SchemaInfo,
   SequenceInfo,
+  SequenceValidation,
   TableInfo,
   TableResult,
+  TableValidation,
+  UnsupportedObject,
+  ValidationLevel,
+  ValidationReport,
 } from './types.js';
+export { validateMigration } from './validate.js';
 export { readClusterVersion } from './version.js';

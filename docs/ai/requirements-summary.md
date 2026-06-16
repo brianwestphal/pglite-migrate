@@ -13,52 +13,48 @@ The problem (PGlite can't open an old-major data dir after a major bump) and the
 - FR-2.1–2.3 `migrate` + progress — **Shipped**
 - FR-2.4–2.9 introspection (tables/columns/FKs/sequences, version-agnostic) — **Shipped**
 - FR-2.10–2.13 topo sort, transfer, sequence realign — **Shipped**
-- FR-2.11 FK-cycle handling — **Partial** (cycle *detection* now correct after the PGLM-20 fix; *handling* still warns + inserts in original order. Deferred-constraint handling specified in doc 8)
-- FR-2.7 FK introspection — **Shipped**, hardened: edges are now schema-qualified (PGLM-20) so insert ordering + cycle detection work for `public`-schema tables (previously silently dropped)
-- FR-2.14 row-by-row INSERT transfer — **Shipped**
-- NFR-2.15 COPY-text fidelity path — **Deferred**
+- FR-2.11 FK-cycle handling — **Shipped** (cyclic subset transferred with deferred constraints via `transferCycle`; `MigrationReport.deferredTables`; PGLM-23/doc 8)
+- FR-2.7 FK introspection — **Shipped**, hardened: edges are schema-qualified (PGLM-20) so ordering + cycle detection work for `public`-schema tables (previously silently dropped)
+- FR-2.14 / NFR-2.15 transfer — **Shipped**: COPY-text first (preserves `json` etc.) with per-table row-by-row INSERT fallback (PGLM-22/doc 7)
 
-## 3 — Schema Reconstruction, standalone (`docs/3-schema-reconstruction.md`) — Design only
+## 3 / 9 — Schema Reconstruction, standalone — Shipped
 
-The no-host-app DDL path. Approach specified (`pg_get_*def`, optional `pg-introspection`/`pg-schema-dump`), scope boundary drawn (app-class objects in; full pg_dump parity out). **Not implemented.**
+The no-host-app DDL path. `reconstructSchema(source, target)` rebuilds app-class objects (enums → sequences → tables+defaults → constraints → indexes) via `pg_get_*def`; out-of-scope objects are detected & reported. Opt-in via `migrate({ reconstructSchema: true })` / CLI `--reconstruct-schema`. (PGLM-25/doc 9; spike PGLM-24 chose hand-rolled.)
 
-## 4 — CLI (`docs/4-cli.md`) — Partial
+## 4 — CLI (`docs/4-cli.md`) — Shipped (one blocked)
 
 - FR-4.1–4.6 arg parsing, version reporting, progress, errors — **Shipped**
-- NG-4.7 target-schema-must-exist assumption — current limitation (lifted by doc 3)
-- NG-4.8 two-engine cross-major wiring — **Partial** (`--source-engine`/`--target-engine` exist; genuine cross-major loading unverified pending a second major)
-- NG-4.9 dry-run/backup/swap flags — **Deferred** (doc 5)
+- NG-4.7 target-schema-must-exist — **lifted** by `--reconstruct-schema`
+- NG-4.8 two-engine cross-major wiring — **Shipped/verified** for the two-engine flow; genuine cross-major refusal **blocked** on a second major (PGLM-19)
+- NG-4.9 dry-run/backup/validate flags — **Shipped** (`--dry-run`, `--backup`/`--backup-dir`, `--validate`, `--on-existing`)
 
-## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Deferred
+## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Shipped
 
-Backup, atomic swap, dry-run, post-migration validation, FK-cycle correctness, idempotence. All **design only** — essential before production data use.
+Backup (FR-5.1), atomic swap (FR-5.2, library primitive), dry-run (FR-5.3), post-migration validation (FR-5.4), FK-cycle correctness (FR-5.5), idempotence (FR-5.6) — all **implemented**. CLI orchestration of the full backup→migrate→validate→swap flow is the host-app's to compose (swap is a primitive); see doc 11.
 
 ## 6 — Testing (`docs/6-testing.md`) — Shipped
 
-Unit (pure + in-memory introspection) and two-version e2e round-trip via npm aliases. Matrix is **Shipped**; becomes a true cross-major test by bumping the `pglite-new` alias when a second major ships.
+Unit (pure + in-memory) and two-version e2e (roundtrip, fidelity, fk-cycle, standalone) via npm aliases. Becomes a true cross-major test by bumping the `pglite-new` alias when a second major ships (PGLM-19).
 
-## 7–14 — Detailed feature specs (design only)
+## 7–14 — Detailed feature specs — Implemented
 
-Each expands a brief mention from docs 1–6 into an implementation-ready requirements doc (FR/NFR/NG markers, design, acceptance, testing, open questions). All **design only** — none implemented yet.
+Each doc expanded a brief mention into an implementation-ready spec, and all are now built (open questions in each doc remain documented product decisions):
 
-- `docs/7-copy-text-transfer.md` — COPY-text fidelity path (NFR-2.15). Key finding: current INSERT path already preserves `jsonb`/`numeric`/`bytea`/arrays; only plain `json` source text (whitespace) is lost.
-- `docs/8-fk-cycle-deferred-constraints.md` — correct cyclic transfer (FR-2.11 / FR-5.5) via a deferred-constraint transaction over the cyclic subset.
-- `docs/9-standalone-schema-reconstruction.md` — detailed spec for the no-host-app DDL path (expands doc 3).
-- `docs/10-backup.md` — source-dir backup (FR-5.1).
-- `docs/11-atomic-swap.md` — write-new-then-rename swap (FR-5.2).
-- `docs/12-dry-run.md` — read-only plan/report (FR-5.3).
-- `docs/13-post-migration-validation.md` — count/sequence/digest validation, gates the swap (FR-5.4).
-- `docs/14-idempotence.md` — re-run safety; recommended default is refuse-if-non-empty (FR-5.6).
+- `docs/7` COPY-text — **done** (PGLM-22). Real gap was only `json` whitespace; everything else already round-tripped.
+- `docs/8` FK-cycle deferred constraints — **done** (PGLM-23).
+- `docs/9` standalone reconstruction — **done** (PGLM-25).
+- `docs/10` backup — **done** (PGLM-26, opt-in CLI).
+- `docs/11` atomic swap — **done** as `swapIntoPlace` primitive (PGLM-27).
+- `docs/12` dry-run — **done** (PGLM-28).
+- `docs/13` validation — **done** (PGLM-29, default `counts`).
+- `docs/14` idempotence — **done** (PGLM-30, default `error`).
 
-## Top follow-ups (file as tickets)
+## Remaining follow-ups
 
-Design is captured in docs 7–14; the remaining work is implementation:
-
-1. COPY-text data path — doc 7 (spike first)
-2. FK-cycle correctness via deferred constraints — doc 8
-3. Standalone schema reconstruction — docs 3 + 9 (spike libraries first)
-4. Safety layer: backup (10) + atomic swap (11) + dry-run (12) + validation (13) + idempotence (14)
-5. Verified cross-major CLI engine loading — NG-4.8 (blocked on a second major)
+1. Verified cross-major run + new-major-refuses-old-dir — **blocked** on a second PG major (PGLM-19).
+2. Upsert/`ON CONFLICT` re-run strategy — deferred (needs PK/unique introspection; doc 14).
+3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path — follow-ups in docs 10/11.
+4. Open product decisions flagged in docs 7–14 (e.g. backup default-on, identity-vs-serial normalization, validation throw-vs-report).
 
 ## Maintenance triggers
 

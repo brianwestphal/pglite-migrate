@@ -1,6 +1,6 @@
 # 7 — COPY-text Data Transfer
 
-**Status: deferred / planned.** Tracked as PGLM-1 (the implementation of `NFR-2.15` from [`2-data-migration.md`](2-data-migration.md)). The v1 row-by-row `INSERT` path ships and is correct for the common case; this document specifies the fidelity upgrade and the spike that must precede it.
+**Status: Implemented (PGLM-22; spike PGLM-21).** `transferTable` is now COPY-text-first with a per-table row-by-row `INSERT` fallback. This document specifies that upgrade; the "Spike findings" section records the confirmed `/dev/blob` API.
 
 ## Motivation / Problem
 
@@ -44,6 +44,19 @@ No value is ever converted to a JS value in between; the text payload produced b
   - that a payload produced by `COPY … TO STDOUT` on `pglite-old` can be consumed by `COPY … FROM STDIN` on `pglite-new` unchanged.
 - **FR-7.2 (spike) TEXT format, not BINARY.** The spike and implementation use COPY **TEXT** format (the default), not BINARY. BINARY format is not guaranteed wire-compatible across Postgres majors and defeats the cross-major goal; TEXT format is the portable, human-auditable representation. CSV format is also out of scope (TEXT's escaping rules are simpler and lossless for our needs).
 - **FR-7.3 (spike) Record findings.** The spike's findings (working API shape per engine, payload type, any version differences) must be written back into this document before the implementation ticket is closed, so the chosen approach is captured next to its rationale.
+
+### Spike findings (PGLM-21, completed)
+
+Probed against both aliases (`pglite-old` / `pglite-new`, both `@electric-sql/pglite@0.5.2` today). Results were **identical on both engines** and verified **cross-engine** (payload produced on old, loaded on new):
+
+- **Working API shape: the `/dev/blob` virtual file, not `STDOUT`/`STDIN`.** PGlite does not expose `COPY … TO STDOUT`/`FROM STDIN` directly; it routes COPY through a virtual file `/dev/blob`:
+  - Source: `const { blob } = await db.query("COPY <t> (<cols>) TO '/dev/blob'")` — the result carries a `blob` field.
+  - Target: `await db.query("COPY <t> (<cols>) FROM '/dev/blob'", [], { blob })` — the payload is passed back via the third-argument options object.
+- **Payload type:** a web `Blob`. It is moved opaquely from source to target; the library never deserializes it. (`blob.text()` shows the TEXT payload, e.g. `1\t{"b":1,  "a":2}\t\\xdeadbeef\t{1,NULL,3}\n` — tab-delimited, `\n`-terminated, default TEXT format.)
+- **Fidelity confirmed:** plain `json` whitespace (`{"b":1,  "a":2}`) round-trips **exactly** through COPY, both same-engine and old→new — this is the fix for the gap PGLM-16 found. `bytea`, arrays (incl. `NULL` elements), `numeric`, `jsonb` also round-trip.
+- **Implication for the structural interface:** `PGliteLike.query` must be widened so the third argument may be an options object carrying `blob`, and the result may carry an optional `blob`. The COPY statements use only `COPY <table> (<cols>) TO/FROM '/dev/blob'` (TEXT) — stable, version-agnostic syntax.
+
+> Note: requirements below that say `TO STDOUT`/`FROM STDIN` are superseded by the `/dev/blob` shape recorded here.
 
 ### Transfer behavior
 

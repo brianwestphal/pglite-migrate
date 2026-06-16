@@ -9,6 +9,10 @@ export default defineConfig({
     globals: true,
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/e2e/**'],
+    // Several unit tests boot a real in-memory PGlite (catalog SQL / COPY has no
+    // meaningful mock), which is slower than the 5s default under full-suite load.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

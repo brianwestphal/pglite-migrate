@@ -1,6 +1,6 @@
 # 12 — Dry-Run Mode
 
-**Status: design only. Not implemented in v1.** This is the requirements spec for the `--dry-run` capability promised by `5-safety-and-rollback.md` (FR-5.3) and `4-cli.md` (NG-4.9). It is tracked as ticket **PGLM-6**. Dry-run is the cheapest, lowest-risk slice of the safety layer — it writes nothing, so it can land ahead of backup/atomic-swap/validation.
+**Status: Implemented (PGLM-28).** This is the requirements spec for the `--dry-run` capability promised by `5-safety-and-rollback.md` (FR-5.3) and `4-cli.md` (NG-4.9). It is tracked as ticket **PGLM-6**. Dry-run is the cheapest, lowest-risk slice of the safety layer — it writes nothing, so it can land ahead of backup/atomic-swap/validation.
 
 ## Motivation / Problem
 

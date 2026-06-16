@@ -2,11 +2,22 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { applySequences, transferTable } from '../src/transfer.js';
-import type { SequenceInfo, TableInfo } from '../src/types.js';
+import type { PGliteLike, QueryOptions, SequenceInfo, TableInfo } from '../src/types.js';
 
 /** Build the structural cluster handle the transfer functions expect. */
 function freshDb(): PGlite {
   return new PGlite();
+}
+
+/** Wrap a cluster so any COPY statement fails, forcing the INSERT fallback. */
+function copyDisabled(db: PGlite): PGliteLike {
+  return {
+    query: <R = Record<string, unknown>>(q: string, params?: unknown[], options?: QueryOptions) => {
+      if (/^\s*COPY/i.test(q)) return Promise.reject(new Error('COPY disabled for test'));
+      return db.query<R>(q, params, options);
+    },
+    exec: (q: string) => db.exec(q),
+  };
 }
 
 describe('transferTable', () => {
@@ -40,7 +51,8 @@ describe('transferTable', () => {
 
     const result = await transferTable(source, target, table);
 
-    expect(result).toEqual({ table: 'public.widgets', rowsCopied: 3 });
+    // Default path is COPY.
+    expect(result).toMatchObject({ table: 'public.widgets', rowsCopied: 3, method: 'copy' });
     const { rows } = await target.query<{ count: string }>(
       'SELECT count(*)::text AS count FROM widgets',
     );
@@ -62,7 +74,8 @@ describe('transferTable', () => {
     const result = await transferTable(source, target, table, (e) => events.push(e));
 
     expect(result.rowsCopied).toBe(0);
-    expect(events).toEqual([{ table: 'public.empties', rowsCopied: 0 }]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ table: 'public.empties', rowsCopied: 0 });
   });
 
   it('preserves NULLs and legitimate falsy values (0, empty string, false)', async () => {
@@ -123,6 +136,70 @@ describe('transferTable', () => {
       'SELECT "order", "MixedCase" FROM quoted',
     );
     expect(rows[0]).toEqual({ order: 7, MixedCase: 'seven' });
+  });
+
+  it('excludes generated (stored) columns; the target recomputes them', async () => {
+    const ddl = `CREATE TABLE gcol (
+      id integer PRIMARY KEY,
+      base integer,
+      doubled integer GENERATED ALWAYS AS (base * 2) STORED
+    )`;
+    await source.exec(ddl);
+    await target.exec(ddl);
+    await source.exec(`INSERT INTO gcol (id, base) VALUES (1, 5), (2, 10)`);
+
+    const table: TableInfo = {
+      schema: 'public',
+      name: 'gcol',
+      columns: [
+        { name: 'id', type: 'integer' },
+        { name: 'base', type: 'integer' },
+        { name: 'doubled', type: 'integer', generated: true },
+      ],
+    };
+
+    const result = await transferTable(source, target, table);
+
+    expect(result.rowsCopied).toBe(2);
+    const { rows } = await target.query<{ id: number; base: number; doubled: number }>(
+      'SELECT id, base, doubled FROM gcol ORDER BY id',
+    );
+    expect(rows).toEqual([
+      { id: 1, base: 5, doubled: 10 },
+      { id: 2, base: 10, doubled: 20 },
+    ]);
+  });
+
+  it('falls back to INSERT (preserving falsy/NULL) when COPY is unavailable', async () => {
+    const ddl = `CREATE TABLE vals2 (id integer PRIMARY KEY, n integer, s text, b boolean)`;
+    await source.exec(ddl);
+    await target.exec(ddl);
+    await source.exec(`INSERT INTO vals2 VALUES (1, 0, '', false), (2, NULL, NULL, NULL)`);
+
+    const table: TableInfo = {
+      schema: 'public',
+      name: 'vals2',
+      columns: [
+        { name: 'id', type: 'integer' },
+        { name: 'n', type: 'integer' },
+        { name: 's', type: 'text' },
+        { name: 'b', type: 'boolean' },
+      ],
+    };
+
+    const result = await transferTable(copyDisabled(source), target, table);
+
+    expect(result.method).toBe('insert');
+    expect(result.fallbackReason).toContain('COPY disabled');
+    expect(result.rowsCopied).toBe(2);
+    const { rows } = await target.query<{
+      id: number;
+      n: number | null;
+      s: string | null;
+      b: boolean | null;
+    }>('SELECT id, n, s, b FROM vals2 ORDER BY id');
+    expect(rows[0]).toEqual({ id: 1, n: 0, s: '', b: false });
+    expect(rows[1]).toEqual({ id: 2, n: null, s: null, b: null });
   });
 });
 

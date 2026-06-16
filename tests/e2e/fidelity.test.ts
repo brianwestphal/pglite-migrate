@@ -11,10 +11,9 @@ import type { PGliteLike } from '../../src/types.js';
  * each value's Postgres *text* rendering (`::text`) on source vs target — the
  * representation the documented COPY-text path (NFR-2.15 / PGLM-1) preserves.
  *
- * Empirically, the current path already preserves `jsonb`, `numeric`, `bytea`,
- * and array types; only `json` (whose exact source text, incl. whitespace, is
- * significant) is lossy. The `json` case is therefore an expected failure here
- * until PGLM-1 lands — flip `it.fails` back to `it` when it does.
+ * The COPY-text path (PGLM-22) carries every value in Postgres's own text
+ * representation end to end, so all of these types — including `json`, whose
+ * exact source text (incl. whitespace) is significant — round-trip verbatim.
  */
 const DDL = `
 CREATE TABLE fid (
@@ -89,11 +88,10 @@ describe('data fidelity (two-version round-trip)', () => {
     expect(await textOf(target, 'txts')).toBe(await textOf(source, 'txts'));
   });
 
-  // Expected failure until the COPY-text path (PGLM-1) lands: round-tripping
-  // `json` through JS re-serializes it, dropping the original whitespace
-  // (`{"b":1,  "a":2}` -> `{"b":1,"a":2}`). When PGLM-1 ships, this should pass
-  // — change `it.fails` to `it`.
-  it.fails('preserves json source text verbatim (whitespace) — PGLM-1', async () => {
+  // The COPY-text path (PGLM-22) keeps `json` in Postgres's own text
+  // representation end to end, so the original source whitespace
+  // (`{"b":1,  "a":2}`) is preserved verbatim.
+  it('preserves json source text verbatim (whitespace)', async () => {
     expect(await textOf(target, 'j')).toBe(await textOf(source, 'j'));
   });
 });

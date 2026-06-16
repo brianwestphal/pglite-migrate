@@ -1,6 +1,6 @@
 # 10 — Backup (Source Data Directory)
 
-**Status: design only. Not implemented in v1.** This is the detailed spec for the backup requirement (PGLM-4 / FR-5.1) under the safety umbrella in [`5-safety-and-rollback.md`](./5-safety-and-rollback.md). Backup is the first line of defense for the whole safety layer and should land before the tool is recommended for production data — file as tickets.
+**Status: Implemented (PGLM-26), opt-in via the CLI `--backup`.** This is the detailed spec for the backup requirement (PGLM-4 / FR-5.1) under the safety umbrella in [`5-safety-and-rollback.md`](./5-safety-and-rollback.md). Backup is the first line of defense for the whole safety layer and should land before the tool is recommended for production data — file as tickets.
 
 ## Motivation / Problem
 

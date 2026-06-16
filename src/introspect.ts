@@ -46,14 +46,29 @@ async function introspectColumns(
   table: string,
 ): Promise<ColumnInfo[]> {
   const regclass = quoteLiteral(quoteQualified(schema, table));
-  const { rows } = await db.query<{ name: string; type: string }>(
-    `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+  const { rows } = await db.query<{
+    name: string;
+    type: string;
+    generated: string;
+    identity: string;
+  }>(
+    `SELECT a.attname AS name,
+            format_type(a.atttypid, a.atttypmod) AS type,
+            a.attgenerated AS generated,
+            a.attidentity AS identity
        FROM pg_attribute a
       WHERE a.attrelid = ${regclass}::regclass
         AND a.attnum > 0 AND NOT a.attisdropped
       ORDER BY a.attnum`,
   );
-  return rows.map((r) => ({ name: r.name, type: r.type }));
+  return rows.map((r) => ({
+    name: r.name,
+    type: r.type,
+    // attgenerated is 's' for STORED generated columns, '' otherwise.
+    generated: r.generated === 's',
+    // attidentity is 'a' (always) / 'd' (by default) / '' (not an identity column).
+    identity: r.identity === 'a' ? 'always' : r.identity === 'd' ? 'default' : null,
+  }));
 }
 
 async function introspectForeignKeys(db: PGliteLike): Promise<ForeignKey[]> {

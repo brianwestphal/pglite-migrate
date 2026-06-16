@@ -116,10 +116,17 @@ Today both point at the same version, so the suite proves the pipeline as a **sa
 
 This project is intended to be driven via Hot Sheet tickets once its dedicated channel/instance is set up. When given substantial work directly, create tickets before implementing; always file follow-up tickets for known gaps (e.g. the deferred schema-reconstruction mode, COPY-text fidelity) rather than leaving them undocumented. Don't leave placeholder UI/text, TODO/FIXME comments, or specced-but-unbuilt requirements without a corresponding follow-up ticket.
 
-### Known follow-up work (file as tickets when the channel exists)
+### Implemented since v1 (see docs 7–14 and the matching tickets)
 
-- **COPY-text data path** — v1 transfers rows via row-by-row parameterized `INSERT`, which round-trips through JS values. Move to `COPY … TO/FROM` text format for fidelity on `json`, `numeric`, `bytea`, and array types (`docs/2-data-migration.md`).
-- **Standalone schema reconstruction** — the no-host-app DDL path (`docs/3-schema-reconstruction.md`).
-- **Cross-major engine loading in the CLI** — `openDataDir` currently resolves one engine; true cross-major needs two engine packages wired through the CLI (`docs/4-cli.md`).
-- **Safety: atomic swap + backup + dry-run + post-migration validation** (`docs/5-safety-and-rollback.md`).
-- **FK cycles** — currently reported as a warning and inserted in original order; needs deferred-constraint handling.
+- **COPY-text data path** — `transferTable` is COPY-text-first with a per-table INSERT fallback (`docs/7`). The only fidelity gap COPY fixed was plain `json` whitespace.
+- **FK-cycle correctness** — cyclic subsets transfer with deferred constraints via `transferCycle` (`docs/8`).
+- **Standalone schema reconstruction** — `reconstructSchema` / `--reconstruct-schema` rebuilds app-class DDL; out-of-scope objects are reported (`docs/9`).
+- **Safety layer** — source backup (`docs/10`), `swapIntoPlace` atomic-swap primitive (`docs/11`), `--dry-run` (`docs/12`), post-migration validation (`docs/13`), and `onExisting` re-run safety (`docs/14`).
+- **generated/identity column introspection**, and the **public-schema FK qualification fix** (ordering/cycles were silently broken before).
+
+### Remaining follow-up work (file as tickets)
+
+- **True cross-major run** — both engine aliases resolve to the same major today; bump `pglite-new` when a next-major PGlite build ships, and add the "new-major engine refuses an old-major dir" assertion (blocked; PGLM-19).
+- **Upsert/`ON CONFLICT` re-run strategy** — needs PK/unique introspection (`docs/14`).
+- **CLI orchestration of the full backup→migrate→validate→swap on-startup-upgrade flow**, stale-`.new` cleanup, reflink backup fast-path (`docs/10`/`docs/11`).
+- **Open product decisions** flagged in docs 7–14 (backup default-on, identity-vs-serial normalization, validation throw-vs-report, etc.).

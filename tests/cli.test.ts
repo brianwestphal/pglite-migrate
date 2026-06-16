@@ -15,6 +15,11 @@ describe('parseArgs', () => {
       target: 'dst',
       sourceEngine: '@electric-sql/pglite',
       targetEngine: '@electric-sql/pglite',
+      validate: 'counts',
+      onExisting: 'error',
+      dryRun: false,
+      backup: false,
+      reconstructSchema: false,
     });
   });
 
@@ -39,6 +44,41 @@ describe('parseArgs', () => {
 
   it('tolerates a missing value after --source-engine (empty string)', () => {
     expect(parseArgs(['src', 'dst', '--source-engine'])).toMatchObject({ sourceEngine: '' });
+  });
+
+  it('parses --validate levels and rejects invalid ones', () => {
+    expect(parseArgs(['src', 'dst', '--validate', 'full'])).toMatchObject({ validate: 'full' });
+    expect(parseArgs(['src', 'dst', '--validate', 'off'])).toMatchObject({ validate: 'off' });
+    expect(() => parseArgs(['src', 'dst', '--validate', 'bogus'])).toThrow(/Invalid --validate/);
+  });
+
+  it('parses --on-existing modes and rejects invalid ones', () => {
+    expect(parseArgs(['src', 'dst', '--on-existing', 'truncate'])).toMatchObject({
+      onExisting: 'truncate',
+    });
+    expect(() => parseArgs(['src', 'dst', '--on-existing', 'bogus'])).toThrow(/Invalid --on-existing/);
+  });
+
+  it('parses --dry-run as a boolean flag (default false)', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ dryRun: false });
+    expect(parseArgs(['src', 'dst', '--dry-run'])).toMatchObject({ dryRun: true });
+  });
+
+  it('parses --backup and --backup-dir (the latter implies backup)', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ backup: false });
+    expect(parseArgs(['src', 'dst', '--backup'])).toMatchObject({ backup: true });
+    expect(parseArgs(['src', 'dst', '--backup-dir', '/tmp/b'])).toMatchObject({
+      backup: true,
+      backupDir: '/tmp/b',
+    });
+  });
+
+  it('parses --reconstruct-schema (and the --standalone alias)', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ reconstructSchema: false });
+    expect(parseArgs(['src', 'dst', '--reconstruct-schema'])).toMatchObject({
+      reconstructSchema: true,
+    });
+    expect(parseArgs(['src', 'dst', '--standalone'])).toMatchObject({ reconstructSchema: true });
   });
 });
 

@@ -1,6 +1,6 @@
 # 8 — Foreign-Key Cycle Handling (Deferred Constraints)
 
-**Status: design only. Not implemented.** Tracks ticket **PGLM-2** and supersedes the "warn and insert in original order" stopgap of `2-data-migration.md` **FR-2.11** / `5-safety-and-rollback.md` **FR-5.5**. Cross-links: `2-data-migration.md` (the data path being extended), `5-safety-and-rollback.md` (the broader safety layer this belongs to), `6-testing.md` (the unit + e2e contract).
+**Status: Implemented (PGLM-23).** Tracks ticket **PGLM-2** and supersedes the "warn and insert in original order" stopgap of `2-data-migration.md` **FR-2.11** / `5-safety-and-rollback.md` **FR-5.5**. Cross-links: `2-data-migration.md` (the data path being extended), `5-safety-and-rollback.md` (the broader safety layer this belongs to), `6-testing.md` (the unit + e2e contract).
 
 ## Motivation / Problem
 

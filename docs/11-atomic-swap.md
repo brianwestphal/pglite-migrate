@@ -1,6 +1,6 @@
 # 11 — Atomic Swap
 
-**Status: design only. Not implemented in v1.** This is the detailed spec for the atomic-swap requirement (PGLM-5 / FR-5.2) under the safety umbrella in [`5-safety-and-rollback.md`](./5-safety-and-rollback.md). Atomic swap is what lets a migration write the new cluster without ever putting the canonical location into a half-written state — file as tickets.
+**Status: Implemented (PGLM-27) as the `swapIntoPlace` library primitive; CLI orchestration pending. ** This is the detailed spec for the atomic-swap requirement (PGLM-5 / FR-5.2) under the safety umbrella in [`5-safety-and-rollback.md`](./5-safety-and-rollback.md). Atomic swap is what lets a migration write the new cluster without ever putting the canonical location into a half-written state — file as tickets.
 
 ## Motivation / Problem
 

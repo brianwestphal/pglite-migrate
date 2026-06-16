@@ -1,6 +1,6 @@
 # 13 — Post-Migration Validation
 
-**Status: design only. Not implemented in v1.** Tracked as **PGLM-7** (refines **FR-5.4** from [`5-safety-and-rollback.md`](./5-safety-and-rollback.md)). This is the check that lets a host app trust an automated, on-startup upgrade without a human in the loop. It must land before — and is gated together with — the atomic swap ([`11-atomic-swap.md`](./11-atomic-swap.md) / PGLM-5).
+**Status: Implemented (PGLM-29), default level `counts`.** Tracked as **PGLM-7** (refines **FR-5.4** from [`5-safety-and-rollback.md`](./5-safety-and-rollback.md)). This is the check that lets a host app trust an automated, on-startup upgrade without a human in the loop. It must land before — and is gated together with — the atomic swap ([`11-atomic-swap.md`](./11-atomic-swap.md) / PGLM-5).
 
 ## Motivation / Problem
 

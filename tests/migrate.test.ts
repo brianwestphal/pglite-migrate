@@ -35,9 +35,12 @@ describe('migrate (orchestrator)', () => {
     expect(report.sequencesSet).toBe(2);
     // onProgress fires once per table, parents before children.
     expect(events.map((e) => e.table)).toEqual(['public.authors', 'public.books']);
+    // Validation runs by default (counts) and passes.
+    expect(report.validation?.level).toBe('counts');
+    expect(report.validation?.ok).toBe(true);
   });
 
-  it('warns (naming the cyclic tables) when the schema has a foreign-key cycle', async () => {
+  it('handles a foreign-key cycle with deferred constraints (no warning)', async () => {
     const cyclic = `
       CREATE TABLE a (id integer PRIMARY KEY, b_id integer);
       CREATE TABLE b (id integer PRIMARY KEY, a_id integer);
@@ -49,9 +52,9 @@ describe('migrate (orchestrator)', () => {
 
     const report = await migrate({ source, target });
 
-    expect(report.warnings).toHaveLength(1);
-    expect(report.warnings[0]).toContain('public.a');
-    expect(report.warnings[0]).toContain('public.b');
+    // The cycle is transferred with deferred constraints, not warned about.
+    expect(report.warnings).toEqual([]);
+    expect([...report.deferredTables].sort()).toEqual(['public.a', 'public.b']);
   });
 
   it('orders public-schema FKs even when alphabetical order would violate them', async () => {
@@ -83,6 +86,98 @@ describe('migrate (orchestrator)', () => {
       sequencesSet: 0,
       totalRows: 0,
       warnings: [],
+      deferredTables: [],
+      skippedTables: [],
     });
+  });
+});
+
+describe('migrate (re-run safety / onExisting)', () => {
+  let source: PGlite;
+  let target: PGlite;
+
+  beforeEach(async () => {
+    source = new PGlite();
+    target = new PGlite();
+    await source.exec(SCHEMA_SQL);
+    await source.exec(SEED_SQL);
+    await target.exec(SCHEMA_SQL);
+    await migrate({ source, target }); // first run populates the target
+  });
+
+  afterEach(async () => {
+    await source.close();
+    await target.close();
+  });
+
+  it('refuses by default when the target is already populated', async () => {
+    await expect(migrate({ source, target })).rejects.toThrow(/already contains rows/);
+  });
+
+  it('truncate empties the target first so a re-run does not duplicate', async () => {
+    const report = await migrate({ source, target, onExisting: 'truncate' });
+
+    expect(report.warnings).toEqual([]);
+    expect(report.validation?.ok).toBe(true);
+    const authors = await target.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM authors',
+    );
+    expect(authors.rows[0].count).toBe('2'); // not 4
+  });
+
+  it('skip leaves already-populated tables untouched and records them', async () => {
+    const report = await migrate({ source, target, onExisting: 'skip' });
+
+    expect([...report.skippedTables].sort()).toEqual(['public.authors', 'public.books']);
+    expect(report.totalRows).toBe(0);
+    const authors = await target.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM authors',
+    );
+    expect(authors.rows[0].count).toBe('2'); // unchanged
+  });
+});
+
+describe('migrate (dry run)', () => {
+  let source: PGlite;
+  let target: PGlite;
+
+  beforeEach(async () => {
+    source = new PGlite();
+    target = new PGlite();
+    await source.exec(SCHEMA_SQL);
+    await source.exec(SEED_SQL);
+    await target.exec(SCHEMA_SQL);
+  });
+
+  afterEach(async () => {
+    await source.close();
+    await target.close();
+  });
+
+  it('reports the plan without writing to the target', async () => {
+    const report = await migrate({ source, target, dryRun: true });
+
+    expect(report.totalRows).toBe(4);
+    expect(report.tables.map((t) => t.table).sort()).toEqual(['public.authors', 'public.books']);
+    expect(report.sequencesSet).toBe(2);
+    expect(report.validation).toBeUndefined();
+
+    // The target is untouched.
+    const a = await target.query<{ count: string }>('SELECT count(*)::text AS count FROM authors');
+    expect(a.rows[0].count).toBe('0');
+  });
+
+  it('plan matches the subsequent real run', async () => {
+    const shape = (r: { tables: { table: string; rowsCopied: number }[]; totalRows: number }) => ({
+      totalRows: r.totalRows,
+      tables: r.tables
+        .map((t) => ({ table: t.table, rowsCopied: t.rowsCopied }))
+        .sort((x, y) => x.table.localeCompare(y.table)),
+    });
+
+    const plan = await migrate({ source, target, dryRun: true });
+    const real = await migrate({ source, target });
+
+    expect(shape(plan)).toEqual(shape(real));
   });
 });

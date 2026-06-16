@@ -1,0 +1,210 @@
+import { quoteIdent, quoteLiteral, quoteQualified } from './ident.js';
+import type { PGliteLike, ReconstructionReport, UnsupportedObject } from './types.js';
+
+/** System schemas that never carry user objects. */
+const SYS = `nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp%'`;
+
+/**
+ * Reconstruct the app-class schema of `source` onto `target` (the no-host-app
+ * "standalone" path). Emits DDL in dependency order — enums → sequences →
+ * tables (+ defaults) → constraints → indexes — using PostgreSQL's own
+ * `pg_get_*def` functions, which run inside PGlite (no `pg_dump` binary).
+ *
+ * Scope is app-class objects only (tables, columns, custom enums, sequences,
+ * PK/UNIQUE/CHECK/FK, indexes). Out-of-scope objects (views, materialized
+ * views, partitioned tables, functions, triggers, RLS policies) are **detected
+ * and reported**, never silently dropped — see `docs/9`.
+ */
+export async function reconstructSchema(
+  source: PGliteLike,
+  target: PGliteLike,
+): Promise<ReconstructionReport> {
+  const enums = await reconstructEnums(source, target);
+  const sequences = await reconstructSequences(source, target);
+  const tables = await reconstructTables(source, target);
+  const constraints = await reconstructConstraints(source, target);
+  const indexes = await reconstructIndexes(source, target);
+  const unsupported = await detectUnsupported(source);
+  return { enums, sequences, tables, constraints, indexes, unsupported };
+}
+
+async function reconstructEnums(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  const { rows } = await source.query<{ schema: string; name: string; labels: string[] }>(
+    `SELECT n.nspname AS schema, t.typname AS name,
+            array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+       FROM pg_type t
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+       JOIN pg_enum e ON e.enumtypid = t.oid
+      WHERE ${SYS}
+      GROUP BY n.nspname, t.typname
+      ORDER BY n.nspname, t.typname`,
+  );
+  const created: string[] = [];
+  for (const r of rows) {
+    const labels = r.labels.map((l) => quoteLiteral(l)).join(', ');
+    await target.exec(`CREATE TYPE ${quoteQualified(r.schema, r.name)} AS ENUM (${labels})`);
+    created.push(`${r.schema}.${r.name}`);
+  }
+  return created;
+}
+
+async function reconstructSequences(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  // Standalone (serial) sequences only; identity-owned sequences (deptype 'i')
+  // are recreated implicitly by their GENERATED … AS IDENTITY column.
+  const { rows } = await source.query<{ schema: string; name: string }>(
+    `SELECT n.nspname AS schema, c.relname AS name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'S' AND ${SYS}
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'i')
+      ORDER BY n.nspname, c.relname`,
+  );
+  const created: string[] = [];
+  for (const r of rows) {
+    await target.exec(`CREATE SEQUENCE IF NOT EXISTS ${quoteQualified(r.schema, r.name)}`);
+    created.push(`${r.schema}.${r.name}`);
+  }
+  return created;
+}
+
+interface ReconColumn {
+  name: string;
+  type: string;
+  notnull: boolean;
+  identity: string;
+  generated: string;
+  default_expr: string | null;
+}
+
+async function reconstructTables(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  const { rows: tables } = await source.query<{ schema: string; name: string }>(
+    `SELECT n.nspname AS schema, c.relname AS name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'r' AND ${SYS.replace(/nspname/g, 'n.nspname')}
+      ORDER BY n.nspname, c.relname`,
+  );
+
+  const created: string[] = [];
+  for (const t of tables) {
+    const qualified = quoteQualified(t.schema, t.name);
+    const { rows: cols } = await source.query<ReconColumn>(
+      `SELECT a.attname AS name,
+              format_type(a.atttypid, a.atttypmod) AS type,
+              a.attnotnull AS notnull,
+              a.attidentity AS identity,
+              a.attgenerated AS generated,
+              pg_get_expr(ad.adbin, ad.adrelid) AS default_expr
+         FROM pg_attribute a
+         LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+        WHERE a.attrelid = ${quoteLiteral(qualified)}::regclass
+          AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum`,
+    );
+    const defs = cols.map((c) => columnDef(c)).join(',\n  ');
+    await target.exec(`CREATE TABLE ${qualified} (\n  ${defs}\n)`);
+    created.push(`${t.schema}.${t.name}`);
+  }
+  return created;
+}
+
+/** Build a single column definition for CREATE TABLE. */
+function columnDef(c: ReconColumn): string {
+  const parts = [`${quoteIdent(c.name)} ${c.type}`];
+  if (c.identity === 'a') parts.push('GENERATED ALWAYS AS IDENTITY');
+  else if (c.identity === 'd') parts.push('GENERATED BY DEFAULT AS IDENTITY');
+  else if (c.generated === 's' && c.default_expr !== null) {
+    parts.push(`GENERATED ALWAYS AS (${c.default_expr}) STORED`);
+  } else if (c.default_expr !== null) {
+    parts.push(`DEFAULT ${c.default_expr}`);
+  }
+  // Identity columns are implicitly NOT NULL; avoid a redundant clause.
+  if (c.notnull && c.identity === '') parts.push('NOT NULL');
+  return parts.join(' ');
+}
+
+async function reconstructConstraints(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  const { rows } = await source.query<{
+    schema: string;
+    table: string;
+    name: string;
+    contype: string;
+    def: string;
+  }>(
+    `SELECT n.nspname AS schema, c.relname AS table, con.conname AS name,
+            con.contype AS contype, pg_get_constraintdef(con.oid) AS def
+       FROM pg_constraint con
+       JOIN pg_class c ON c.oid = con.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE con.contype IN ('p', 'u', 'c', 'f') AND ${SYS.replace(/nspname/g, 'n.nspname')}
+      ORDER BY CASE con.contype WHEN 'f' THEN 1 ELSE 0 END`, // FKs after PK/UNIQUE/CHECK
+  );
+  const created: string[] = [];
+  for (const r of rows) {
+    await target.exec(
+      `ALTER TABLE ${quoteQualified(r.schema, r.table)} ADD CONSTRAINT ${quoteIdent(r.name)} ${r.def}`,
+    );
+    created.push(`${r.schema}.${r.table}.${r.name}`);
+  }
+  return created;
+}
+
+async function reconstructIndexes(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  // Indexes that do not back a constraint (those are created with the constraint).
+  const { rows } = await source.query<{ name: string; def: string }>(
+    `SELECT ic.relname AS name, pg_get_indexdef(i.indexrelid) AS def
+       FROM pg_index i
+       JOIN pg_class ic ON ic.oid = i.indexrelid
+       JOIN pg_class tc ON tc.oid = i.indrelid
+       JOIN pg_namespace n ON n.oid = tc.relnamespace
+      WHERE ${SYS.replace(/nspname/g, 'n.nspname')}
+        AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)
+      ORDER BY ic.relname`,
+  );
+  const created: string[] = [];
+  for (const r of rows) {
+    await target.exec(r.def);
+    created.push(r.name);
+  }
+  return created;
+}
+
+/** Detect out-of-scope objects so they can be reported rather than dropped. */
+async function detectUnsupported(source: PGliteLike): Promise<UnsupportedObject[]> {
+  const found: UnsupportedObject[] = [];
+
+  const relkinds: Record<string, string> = { v: 'view', m: 'materialized view', p: 'partitioned table' };
+  const { rows: rels } = await source.query<{ schema: string; name: string; kind: string }>(
+    `SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('v', 'm', 'p') AND ${SYS.replace(/nspname/g, 'n.nspname')}`,
+  );
+  for (const r of rels) found.push({ kind: relkinds[r.kind] ?? 'relation', name: `${r.schema}.${r.name}` });
+
+  const { rows: funcs } = await source.query<{ schema: string; name: string }>(
+    `SELECT n.nspname AS schema, p.proname AS name
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE ${SYS.replace(/nspname/g, 'n.nspname')}`,
+  );
+  for (const r of funcs) found.push({ kind: 'function', name: `${r.schema}.${r.name}` });
+
+  const { rows: trigs } = await source.query<{ schema: string; table: string; name: string }>(
+    `SELECT n.nspname AS schema, c.relname AS table, t.tgname AS name
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT t.tgisinternal AND ${SYS.replace(/nspname/g, 'n.nspname')}`,
+  );
+  for (const r of trigs) found.push({ kind: 'trigger', name: `${r.schema}.${r.table}.${r.name}` });
+
+  const { rows: policies } = await source.query<{ schema: string; table: string; name: string }>(
+    `SELECT n.nspname AS schema, c.relname AS table, pol.polname AS name
+       FROM pg_policy pol
+       JOIN pg_class c ON c.oid = pol.polrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE ${SYS.replace(/nspname/g, 'n.nspname')}`,
+  );
+  for (const r of policies) found.push({ kind: 'policy', name: `${r.schema}.${r.table}.${r.name}` });
+
+  return found;
+}
