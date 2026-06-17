@@ -11,3 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   runs end to end across a real PG17 → PG18 pair, alongside standalone schema
   reconstruction, FK-cycle handling, and the backup / dry-run / validation /
   atomic-swap safety layer.
+
+## [0.0.1] - 2026-06-17
+
+
+- COPY-text data transfer for higher fidelity, with a per-table INSERT fallback
+- Correct row ordering and cyclic foreign keys via topological sort + deferred constraints
+- Standalone schema reconstruction (`--reconstruct-schema`) rebuilds app-class DDL
+- Safety layer: source backup, atomic swap, `--dry-run`, and post-migration validation
+- Re-run safety via `onExisting`, plus generated/identity column support
+- Fixed a public-schema foreign-key bug that broke insert ordering and cycles
+- Verified cross-major migrations against real PG17 → PG18 PGlite engines
