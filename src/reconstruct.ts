@@ -125,6 +125,9 @@ function columnDef(c: ReconColumn): string {
 }
 
 async function reconstructConstraints(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  // Emit FKs after all PK/UNIQUE/CHECK (ordered by contype below): every
+  // referenced key then already exists, so no per-table (parent-before-child)
+  // FK ordering is needed within the FK bucket.
   const { rows } = await source.query<{
     schema: string;
     table: string;

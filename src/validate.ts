@@ -40,6 +40,10 @@ async function sequenceValue(db: PGliteLike, schema: string, name: string): Prom
  * source and target (and, at the `full` level, a content digest), plus that
  * each target sequence is at least as advanced as the source. Reads only; never
  * mutates. Returns a report whose `ok` is true only if every check passed.
+ *
+ * @param level - validation depth, `counts` or `full`. The public `validate`
+ * option's `off` value is filtered out by `migrate` before reaching here, so
+ * this function only accepts the levels that actually do work.
  */
 export async function validateMigration(
   source: PGliteLike,
