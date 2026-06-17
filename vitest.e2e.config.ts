@@ -1,12 +1,13 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * End-to-end round-trip suite. Loads two independently-resolved PGlite
+ * End-to-end cross-major suite. Loads two independently-resolved PGlite
  * instances (the `pglite-old` / `pglite-new` npm aliases) and migrates real
- * data between them. Today both aliases point at the same PGlite version, so
- * the suite proves the full pipeline as a same-major round-trip; when PGlite
- * ships the next PostgreSQL major, bump the `pglite-new` alias in package.json
- * and the same suite becomes a genuine cross-major test.
+ * data between them. The aliases resolve to two different PostgreSQL majors —
+ * `@electric-sql/pglite@0.4.x` is PG17, `@0.5.x` is PG18 — so the suite is a
+ * genuine cross-major migration (PG17 → PG18). When a future PGlite ships PG19,
+ * bump only the `pglite-new` alias in package.json and the same suite re-targets
+ * the new pair.
  *
  * E2E runs are slower (real PGlite boots, disk I/O), so they get a longer
  * timeout and live outside the default `vitest run`.

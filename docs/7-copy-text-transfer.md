@@ -47,7 +47,7 @@ No value is ever converted to a JS value in between; the text payload produced b
 
 ### Spike findings (PGLM-21, completed)
 
-Probed against both aliases (`pglite-old` / `pglite-new`, both `@electric-sql/pglite@0.5.2` today). Results were **identical on both engines** and verified **cross-engine** (payload produced on old, loaded on new):
+Probed against both aliases (`pglite-old` = PG17 / `pglite-new` = PG18; the spike originally ran when both pointed at `@electric-sql/pglite@0.5.2`, and the COPY-text suite is now re-run across the real PG17→PG18 pair). Results were **identical on both engines** and verified **cross-engine** (payload produced on old, loaded on new):
 
 - **Working API shape: the `/dev/blob` virtual file, not `STDOUT`/`STDIN`.** PGlite does not expose `COPY … TO STDOUT`/`FROM STDIN` directly; it routes COPY through a virtual file `/dev/blob`:
   - Source: `const { blob } = await db.query("COPY <t> (<cols>) TO '/dev/blob'")` — the result carries a `blob` field.
@@ -126,7 +126,7 @@ Per the project's double-coverage philosophy ([`6-testing.md`](6-testing.md), `C
 - Add fidelity assertions for at least one currently-unconfirmed at-risk type once exercised (e.g. `xml` or `money`), comparing `::text` source vs. target.
 - A table forced onto the INSERT fallback still round-trips correctly and the warning is asserted.
 - Generated-stored and identity columns assert correct target values after migration.
-- Re-run against both aliases; when a genuine second major ships (`FR-6.2`), the same suite becomes the real cross-major fidelity proof.
+- Re-run against both aliases; with the aliases now on PG17 (0.4.3) / PG18 (0.5.3) per `FR-6.2`, this suite is the real cross-major fidelity proof.
 
 ## Open Questions
 

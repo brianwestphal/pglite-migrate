@@ -33,7 +33,7 @@ tests/
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
   loader.test.ts / cli.test.ts           openDataDir; parseArgs + run() over real temp dirs
   helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
-  e2e/roundtrip / fidelity / fk-cycle / standalone .test.ts   Two-version round-trips (pglite-old/pglite-new aliases)
+  e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
 docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 ```
 
@@ -68,7 +68,7 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 - **…add a CLI flag** → `src/cli.ts`
 - **…open an engine version / alias** → `src/loader.ts`; **…detect major version** → `src/version.ts`
 - **…add/adjust types** → `src/types.ts`
-- **…change the e2e version matrix** → `pglite-old`/`pglite-new` aliases in `package.json`
+- **…change the e2e version matrix** → `pglite-old` (0.4.x/PG17) / `pglite-new` (0.5.x/PG18) aliases in `package.json` (PGlite minor line ↔ PG major: 0.2→16, 0.3/0.4→17, 0.5→18)
 
 ## Build / test
 

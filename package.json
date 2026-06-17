@@ -57,8 +57,8 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.2",
-    "pglite-old": "npm:@electric-sql/pglite@0.5.2",
-    "pglite-new": "npm:@electric-sql/pglite@0.5.2",
+    "pglite-old": "npm:@electric-sql/pglite@0.4.3",
+    "pglite-new": "npm:@electric-sql/pglite@0.5.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.3",
     "@vitest/coverage-v8": "^4.1.9",

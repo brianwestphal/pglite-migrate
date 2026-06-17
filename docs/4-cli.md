@@ -14,7 +14,7 @@ The `pglite-migrate` bin (`src/cli.ts`) is the standalone, command-line face of 
 ## Current limitations / deferred
 
 - **NG-4.7** The CLI assumes the **target schema already exists** (v1 is app-driven, data-only). Pointing it at a fresh empty target fails on the first insert. Standalone schema reconstruction (`3-schema-reconstruction.md`) lifts this.
-- **NG-4.8** `openDataDir` (`src/loader.ts`) currently resolves a single engine module. True cross-major use requires both engine packages installed (e.g. under npm aliases) and selected via `--source-engine`/`--target-engine`; verify a new-major engine genuinely refuses to open an old-major directory (the failure that motivates the tool) and that the two-engine flow is wired through.
+- **NG-4.8** `openDataDir` (`src/loader.ts`) resolves a single engine module per call. True cross-major use installs both engine packages (under npm aliases) and selects them via `--source-engine`/`--target-engine`. **Verified (PGLM-19/PGLM-9):** with `pglite-old` = PG17 (0.4.3) and `pglite-new` = PG18 (0.5.3), `tests/e2e/cross-major.test.ts` asserts the two-engine flow is wired through *and* that a new-major engine genuinely refuses to open an old-major directory (the failure that motivates the tool).
 - **NG-4.9** No `--dry-run`, `--backup`, or atomic-swap flags yet — see `5-safety-and-rollback.md`.
 
 ## Acceptance

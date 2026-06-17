@@ -145,7 +145,7 @@ export interface MigrationReport {
 
 - **Happy path.** A source seeded with related tables, a serial sequence, and a `timestamptz` migrates into a fresh-schema target with `validation: 'counts'`. The report shows `validation.ok === true`, per-table `rowsMatch === true`, and each touched sequence `consistent === true`. (Extends the existing `tests/e2e/roundtrip.test.ts` scenario.)
 - **Deliberate mismatch → fail, no swap.** With a target whose schema exists but where validation is configured to run, inject a discrepancy (e.g. delete a row from the target after transfer but before validation, or transfer into a target missing one expected row) and assert: `validateMigration` reports `ok === false`, the offending table appears in `mismatches`, `migrate` raises / marks the report accordingly, and **the swap step is not invoked** (assert via a swap spy / by confirming the canonical directory is unchanged once PGLM-5 lands). This is the core safety guarantee.
-- **`full` digest agreement.** On a same-major round-trip, a `full` run produces matching per-table digests for at least one table containing `json`, `numeric`, and a `bytea`/array column, demonstrating content-level agreement when the engines agree on text form.
+- **`full` digest agreement.** A `full` run produces matching per-table digests for at least one table containing `json`, `numeric`, and a `bytea`/array column, demonstrating content-level agreement when the engines agree on text form. **Confirmed across the real cross-major pair (PG17 0.4.3 → PG18 0.5.3, PGLM-19):** a fidelity table with `json`/`jsonb`/`numeric`/`bytea`/`integer[]`/`timestamptz` digests `digestMatch === true` — because the COPY-text path preserves the source's text representation (`docs/7`), the digests do not diverge across these two majors.
 
 ## Testing requirements
 
@@ -158,7 +158,7 @@ Per [`6-testing.md`](./6-testing.md), every new capability gets a unit test for 
 - **E2E (`tests/e2e/*.test.ts`, `vitest.e2e.config.ts`).** Using the two-version `pglite-old`/`pglite-new` aliases (do not collapse them — NFR-6.3):
   - Happy-path `counts` validation passes on the existing round-trip fixture.
   - The deliberate-mismatch case above fails and blocks the swap.
-  - A `full` run agrees on a fidelity-heavy table on the same-major matrix; document expected behavior once a true cross-major build is available (digest divergence on differing text forms is "investigate," per Design).
+  - A `full` run agrees on a fidelity-heavy table across the cross-major matrix (PG17→PG18) — verified during PGLM-19 (digests match because COPY-text preserves text form). Any future digest divergence on a differing text form remains "investigate," per Design.
 - Add validation cases to the "What the e2e asserts" / "Gaps" lists in `6-testing.md` when implemented.
 
 ## Open Questions

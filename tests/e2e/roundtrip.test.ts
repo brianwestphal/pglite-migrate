@@ -9,11 +9,11 @@ import { SCHEMA_SQL, SEED_SQL } from '../helpers.js';
  * Full pipeline: an old-engine source with data migrated into a new-engine
  * target whose schema was created up front (the app-driven contract).
  *
- * `pglite-old` and `pglite-new` are npm aliases. Today they resolve to the same
- * PGlite version, so this is a same-major round-trip that proves the transfer
- * pipeline end to end. When PGlite ships the next PostgreSQL major, bump the
- * `pglite-new` alias in package.json and this becomes a genuine cross-major
- * migration test with no other changes.
+ * `pglite-old` and `pglite-new` are npm aliases resolving to two different
+ * PostgreSQL majors (0.4.x = PG17, 0.5.x = PG18), so this in-memory round-trip
+ * is already a genuine cross-major migration. The on-disk variant — including
+ * the assertion that a PG18 engine refuses a PG17 data dir — lives in
+ * `cross-major.test.ts`.
  */
 describe('migrate (two-version round-trip)', () => {
   let source: PGliteOld;

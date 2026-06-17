@@ -3,20 +3,22 @@
 ## Structure
 
 - **Unit** (`tests/*.test.ts`, `vitest.config.ts`) — fast, isolated. Pure logic (`topologicalSort`, `readClusterVersion`) needs no cluster. Module-level behavior that genuinely requires a cluster (introspection) uses a single in-memory `new PGlite()`.
-- **E2E** (`tests/e2e/*.test.ts`, `vitest.e2e.config.ts`) — the two-version round-trip. Loads two independently-resolved PGlite engines and migrates real data between them.
+- **E2E** (`tests/e2e/*.test.ts`, `vitest.e2e.config.ts`) — the two-version round-trip. Loads two independently-resolved PGlite engines, on **two different Postgres majors**, and migrates real data between them.
 
 ## The npm-alias matrix
 
 The e2e harness loads two engines via aliases declared in `package.json`:
 
 ```jsonc
-"pglite-old": "npm:@electric-sql/pglite@0.5.2",
-"pglite-new": "npm:@electric-sql/pglite@0.5.2"   // bump to the next major's build when it ships
+"pglite-old": "npm:@electric-sql/pglite@0.4.3",  // PG17
+"pglite-new": "npm:@electric-sql/pglite@0.5.3"   // PG18
 ```
 
-- **FR-6.1** Today both aliases resolve to the same version, so the suite proves the pipeline as a **same-major round-trip** (`new PGliteOld()` → migrate → `new PGliteNew()`).
-- **FR-6.2** When PGlite ships a build on the next Postgres major, bump **only** the `pglite-new` alias; the identical suite becomes a genuine cross-major test with no other change.
-- **NFR-6.3** Do not collapse the two aliases into one shared import — the two-distinct-engine shape is the property under test.
+PGlite's bundled Postgres major tracks its minor line: `0.4.x` → **PG17**, `0.5.x` → **PG18** (`0.3.x` was PG17, `0.2.x` PG16). Pointing the two aliases at 0.4.x and 0.5.x makes the suite a real cross-major migration.
+
+- **FR-6.1 / FR-6.2** The aliases resolve to **two different majors**, so the suite is a **genuine cross-major run** (`new PGliteOld()` is PG17 → migrate → `new PGliteNew()` is PG18), not just a same-major round-trip. This is now satisfied (PGLM-19), no longer pending a second build. When a future PGlite ships PG19, bump **only** `pglite-new`; the identical suite re-targets the new pair with no other change.
+- **NFR-6.3** Do not collapse the two aliases into one shared import — the two-distinct-engine, two-major shape is the property under test.
+- **`tests/e2e/cross-major.test.ts`** materializes a real PG17 cluster on disk and asserts that (a) the new (PG18) engine genuinely **refuses** to open it — the motivating failure, coordinated with PGLM-9 — and (b) `migrate` copies the data into a PG18 target whose schema the host app created up front. The cross-major assertions self-gate on the engines actually differing, so the suite stays green even if the aliases are temporarily aligned.
 
 ## Philosophy (see CLAUDE.md)
 
@@ -35,7 +37,7 @@ The e2e harness loads two engines via aliases declared in `package.json`:
 - Fidelity cases for `json`/`jsonb`, `numeric`, `bytea`, arrays (will harden once the COPY-text path lands — `2-data-migration.md`).
 - FK-cycle handling once deferred constraints are implemented (`5-safety-and-rollback.md`).
 - Standalone schema-reconstruction e2e once that mode exists (`3-schema-reconstruction.md`).
-- A true cross-major run once a second Postgres major is available as a PGlite build.
+- ~~A true cross-major run once a second Postgres major is available as a PGlite build.~~ **Done (PGLM-19)** — the aliases resolve to PG17 (0.4.3) and PG18 (0.5.3); the whole suite is cross-major and `cross-major.test.ts` proves the new-engine-refuses-old-dir failure on disk.
 
 ## Commands
 

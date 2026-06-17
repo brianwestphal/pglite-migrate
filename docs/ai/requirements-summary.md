@@ -25,7 +25,7 @@ The no-host-app DDL path. `reconstructSchema(source, target)` rebuilds app-class
 
 - FR-4.1–4.6 arg parsing, version reporting, progress, errors — **Shipped**
 - NG-4.7 target-schema-must-exist — **lifted** by `--reconstruct-schema`
-- NG-4.8 two-engine cross-major wiring — **Shipped/verified** for the two-engine flow; genuine cross-major refusal **blocked** on a second major (PGLM-19)
+- NG-4.8 two-engine cross-major wiring — **Shipped/verified**, including the genuine cross-major refusal: the aliases now resolve to PG17 (0.4.3) / PG18 (0.5.3) and `tests/e2e/cross-major.test.ts` asserts a PG18 engine refuses a PG17 dir (PGLM-19, PGLM-9)
 - NG-4.9 dry-run/backup/validate flags — **Shipped** (`--dry-run`, `--backup`/`--backup-dir`, `--validate`, `--on-existing`)
 
 ## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Shipped
@@ -34,7 +34,7 @@ Backup (FR-5.1), atomic swap (FR-5.2, library primitive), dry-run (FR-5.3), post
 
 ## 6 — Testing (`docs/6-testing.md`) — Shipped
 
-Unit (pure + in-memory) and two-version e2e (roundtrip, fidelity, fk-cycle, standalone) via npm aliases. Becomes a true cross-major test by bumping the `pglite-new` alias when a second major ships (PGLM-19).
+Unit (pure + in-memory) and two-version e2e (roundtrip, fidelity, fk-cycle, standalone, **cross-major**) via npm aliases. The aliases resolve to two real majors — `pglite-old` = PG17 (0.4.3), `pglite-new` = PG18 (0.5.3) — so the whole e2e suite is a **genuine cross-major run**, and `cross-major.test.ts` proves on disk that a PG18 engine refuses a PG17 data dir (PGLM-19, done). A future PG19 needs only a `pglite-new` bump.
 
 ## 7–14 — Detailed feature specs — Implemented
 
@@ -51,7 +51,7 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 
 ## Remaining follow-ups
 
-1. Verified cross-major run + new-major-refuses-old-dir — **blocked** on a second PG major (PGLM-19).
+1. ~~Verified cross-major run + new-major-refuses-old-dir.~~ **Done (PGLM-19)** — aliases at PG17 (0.4.3) / PG18 (0.5.3); the e2e suite is cross-major and `cross-major.test.ts` proves the refusal on disk.
 2. Upsert/`ON CONFLICT` re-run strategy — deferred (needs PK/unique introspection; doc 14).
 3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path — follow-ups in docs 10/11.
 4. Open product decisions flagged in docs 7–14 (e.g. backup default-on, identity-vs-serial normalization, validation throw-vs-report).

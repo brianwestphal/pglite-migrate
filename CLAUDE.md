@@ -92,11 +92,11 @@ npm run typecheck   # tsc --noEmit
 `tests/e2e/` loads two independently-resolved PGlite engines via npm aliases declared in `package.json`:
 
 ```jsonc
-"pglite-old": "npm:@electric-sql/pglite@0.5.2",
-"pglite-new": "npm:@electric-sql/pglite@0.5.2"  // bump to the PG18 build when it lands
+"pglite-old": "npm:@electric-sql/pglite@0.4.3",  // PG17
+"pglite-new": "npm:@electric-sql/pglite@0.5.3"   // PG18
 ```
 
-Today both point at the same version, so the suite proves the pipeline as a **same-major round-trip**. When PGlite ships the next Postgres major, bump only the `pglite-new` alias and the identical suite becomes a genuine cross-major test. **Do not** collapse the two aliases into one import — the two-engine shape is the whole point.
+The two aliases now resolve to **two different Postgres majors** — `@electric-sql/pglite@0.4.x` bundles PG17, `@0.5.x` bundles PG18 — so the e2e suite is a **genuine cross-major run** (PG17 → PG18), not a same-major round-trip. `tests/e2e/cross-major.test.ts` additionally proves the motivating failure on disk: a PG18 engine genuinely refuses to open a PG17 data directory. **Do not** collapse the two aliases into one import — the two-engine, two-major shape is the whole point (NFR-6.3). When a future PGlite ships PG19, bump only `pglite-new` and the identical suite re-targets the new pair.
 
 ## Testing Philosophy
 
@@ -123,10 +123,10 @@ This project is intended to be driven via Hot Sheet tickets once its dedicated c
 - **Standalone schema reconstruction** — `reconstructSchema` / `--reconstruct-schema` rebuilds app-class DDL; out-of-scope objects are reported (`docs/9`).
 - **Safety layer** — source backup (`docs/10`), `swapIntoPlace` atomic-swap primitive (`docs/11`), `--dry-run` (`docs/12`), post-migration validation (`docs/13`), and `onExisting` re-run safety (`docs/14`).
 - **generated/identity column introspection**, and the **public-schema FK qualification fix** (ordering/cycles were silently broken before).
+- **True cross-major run (PGLM-19)** — the aliases now resolve to two real majors (`pglite-old` = PG17 via 0.4.3, `pglite-new` = PG18 via 0.5.3). The whole e2e suite is a genuine PG17 → PG18 migration, and `tests/e2e/cross-major.test.ts` asserts on disk that a PG18 engine refuses a PG17 data dir (the motivating failure, PGLM-9). Verified against a real PGlite 0.4 (PG17) data directory.
 
 ### Remaining follow-up work (file as tickets)
 
-- **True cross-major run** — both engine aliases resolve to the same major today; bump `pglite-new` when a next-major PGlite build ships, and add the "new-major engine refuses an old-major dir" assertion (blocked; PGLM-19).
 - **Upsert/`ON CONFLICT` re-run strategy** — needs PK/unique introspection (`docs/14`).
 - **CLI orchestration of the full backup→migrate→validate→swap on-startup-upgrade flow**, stale-`.new` cleanup, reflink backup fast-path (`docs/10`/`docs/11`).
 - **Open product decisions** flagged in docs 7–14 (backup default-on, identity-vs-serial normalization, validation throw-vs-report, etc.).
