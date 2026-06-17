@@ -90,6 +90,13 @@ npm run demo        # build + capture the README CLI transcripts (scripts/demo.m
 
 The README's "Demos" section is the **verbatim** output of `npm run demo` (real CLI runs against a live PG17 → PG18 pair). Re-run it and refresh that section whenever CLI output changes.
 
+## CI & Release
+
+- **CI** (`.github/workflows/ci.yml`) runs on every push/PR to `main`: unit tests (Node 20 + 22 matrix), the cross-major e2e (PG17 → PG18), lint, typecheck, and `build` + `npm pack --dry-run`.
+- **Release** is tag-driven. `npm run release` (interactive, `scripts/release.sh`) bumps the version, updates `CHANGELOG.md`, runs the local gate (typecheck/lint/test/e2e/build), commits `release: v{ver}`, and pushes an annotated `v{ver}` tag. `npm run release:beta` is tag-only (no version bump/commit) and pushes `v{ver}-beta.{N}`.
+- **Publish** (`.github/workflows/release.yml`) triggers on those tags: it re-validates, creates a GitHub Release (stable → `latest`; beta → `prerelease`), and publishes to npm via OIDC trusted publishing (`--provenance`). A stable tag publishes to `latest`; a `-beta.N` tag publishes to `--tag beta`. Requires an `npm-publish` GitHub environment and an npm trusted-publisher rule for `v*`.
+- `CHANGELOG.md` keeps an `## Unreleased` section on top; release entries are inserted newest-first below it (the CI extracts the matching `## [version]` block as the GitHub Release body).
+
 ### The two-version e2e harness
 
 `tests/e2e/` loads two independently-resolved PGlite engines via npm aliases declared in `package.json`:

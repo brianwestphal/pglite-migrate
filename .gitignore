@@ -14,3 +14,6 @@ coverage/
 # Scratch PGlite data directories created by tests / manual runs
 tmp/
 *.pgdata/
+
+# Release-script state (scripts/release.sh)
+.release-state.json
