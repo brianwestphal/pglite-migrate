@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   reconstruction, FK-cycle handling, and the backup / dry-run / validation /
   atomic-swap safety layer.
 
+## [0.0.2] - 2026-06-17
+
+
+- Validation can now optionally throw on failure instead of only reporting (opt-in)
+- Backup retention via `--keep <n>` to prune older backups automatically
+- Schema reconstruction gains an `onUnsupported` option for handling out-of-scope objects
+
 ## [0.0.1] - 2026-06-17
 
 
