@@ -13,6 +13,7 @@ src/
   index.ts        Public API barrel — the only import surface for consumers
   types.ts        PGliteLike structural interface + all result/option types (SSOT for shapes)
   ident.ts        SQL identifier/literal quoting helpers
+  catalog.ts      Shared catalog-SQL building blocks: tableKey, systemSchemaFilter(alias), regclassLiteral, countRows
   introspect.ts   introspectSchema(db): tables, columns (+ generated/identity), FKs, sequences via catalog SQL
   transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback), transferCycle, applySequences
   migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report
@@ -24,7 +25,7 @@ src/
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster
   cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run
 tests/
-  topo / version / ident .test.ts        Pure unit tests
+  topo / version / ident / catalog .test.ts   Pure unit tests (catalog: tableKey/systemSchemaFilter/regclassLiteral + countRows)
   introspect(.edge).test.ts              Introspection (basic + edge: multi-schema, dropped/qualified FK/composite, generated/identity, type qualifiers)
   transfer.test.ts                       transferTable (COPY + INSERT fallback + generated exclusion), applySequences
   migrate.test.ts                        Orchestrator: totals, FK ordering, cycle handling, validation, onExisting re-run safety, dry-run
@@ -60,6 +61,7 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 ## Where do I look to…
 
 - **…change what's introspected** → `src/introspect.ts`
+- **…change shared catalog-SQL helpers (schema filter / qualified keys / row count)** → `src/catalog.ts`
 - **…change insert ordering / cycle handling** → `topologicalSort` / `transferCycle` in `src/transfer.ts`
 - **…change how rows are copied** → `transferTable` (COPY/INSERT) in `src/transfer.ts`
 - **…change sequence handling** → `applySequences` in `src/transfer.ts`

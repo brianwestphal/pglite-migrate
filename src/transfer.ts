@@ -1,4 +1,5 @@
-import { quoteIdent, quoteLiteral, quoteQualified } from './ident.js';
+import { countRows, regclassLiteral, tableKey } from './catalog.js';
+import { quoteIdent, quoteQualified } from './ident.js';
 import type {
   ForeignKey,
   PGliteLike,
@@ -7,11 +8,6 @@ import type {
   TableInfo,
   TableResult,
 } from './types.js';
-
-/** The qualified `schema.name` key used to match tables against FK edges. */
-function tableKey(t: { schema: string; name: string }): string {
-  return `${t.schema}.${t.name}`;
-}
 
 /**
  * Order tables so every parent is inserted before its children, satisfying
@@ -128,10 +124,7 @@ async function copyTable(
 
   // Count first: an empty table yields no COPY payload on some engines, so
   // short-circuit it rather than treating the missing blob as a COPY failure.
-  const { rows } = await source.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM ${qualified}`,
-  );
-  const rowCount = rows[0]?.n ?? 0;
+  const rowCount = await countRows(source, qualified);
   if (rowCount === 0) return 0;
 
   const { blob } = await source.query(`COPY ${qualified} (${colList}) TO '/dev/blob'`);
@@ -180,7 +173,7 @@ async function targetCycleConstraints(
     const { rows } = await target.query<{ name: string; deferrable: boolean }>(
       `SELECT conname AS name, condeferrable AS deferrable
          FROM pg_constraint
-        WHERE contype = 'f' AND conrelid = ${quoteLiteral(qualified)}::regclass`,
+        WHERE contype = 'f' AND conrelid = ${regclassLiteral(t.schema, t.name)}::regclass`,
     );
     for (const r of rows) constraints.push({ qualified, name: r.name, deferrable: r.deferrable });
   }
@@ -249,10 +242,8 @@ export async function applySequences(
   let applied = 0;
   for (const seq of sequences) {
     if (seq.lastValue === null) continue;
-    const qualified = quoteLiteral(quoteQualified(seq.schema, seq.name));
-    await target.query(`SELECT setval(${qualified}::regclass, $1, true)`, [
-      seq.lastValue.toString(),
-    ]);
+    const seqRef = regclassLiteral(seq.schema, seq.name);
+    await target.query(`SELECT setval(${seqRef}::regclass, $1, true)`, [seq.lastValue.toString()]);
     applied++;
   }
   return applied;

@@ -1,8 +1,9 @@
+import { regclassLiteral, systemSchemaFilter } from './catalog.js';
 import { quoteIdent, quoteLiteral, quoteQualified } from './ident.js';
 import type { PGliteLike, ReconstructionReport, UnsupportedObject } from './types.js';
 
-/** System schemas that never carry user objects. */
-const SYS = `nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp%'`;
+/** Every query here aliases `pg_namespace` as `n`, so the schema filter uses `n.nspname`. */
+const SYS = systemSchemaFilter('n.nspname');
 
 /**
  * Reconstruct the app-class schema of `source` onto `target` (the no-host-app
@@ -81,7 +82,7 @@ async function reconstructTables(source: PGliteLike, target: PGliteLike): Promis
     `SELECT n.nspname AS schema, c.relname AS name
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind = 'r' AND ${SYS.replace(/nspname/g, 'n.nspname')}
+      WHERE c.relkind = 'r' AND ${SYS}
       ORDER BY n.nspname, c.relname`,
   );
 
@@ -97,7 +98,7 @@ async function reconstructTables(source: PGliteLike, target: PGliteLike): Promis
               pg_get_expr(ad.adbin, ad.adrelid) AS default_expr
          FROM pg_attribute a
          LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
-        WHERE a.attrelid = ${quoteLiteral(qualified)}::regclass
+        WHERE a.attrelid = ${regclassLiteral(t.schema, t.name)}::regclass
           AND a.attnum > 0 AND NOT a.attisdropped
         ORDER BY a.attnum`,
     );
@@ -136,7 +137,7 @@ async function reconstructConstraints(source: PGliteLike, target: PGliteLike): P
        FROM pg_constraint con
        JOIN pg_class c ON c.oid = con.conrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE con.contype IN ('p', 'u', 'c', 'f') AND ${SYS.replace(/nspname/g, 'n.nspname')}
+      WHERE con.contype IN ('p', 'u', 'c', 'f') AND ${SYS}
       ORDER BY CASE con.contype WHEN 'f' THEN 1 ELSE 0 END`, // FKs after PK/UNIQUE/CHECK
   );
   const created: string[] = [];
@@ -157,7 +158,7 @@ async function reconstructIndexes(source: PGliteLike, target: PGliteLike): Promi
        JOIN pg_class ic ON ic.oid = i.indexrelid
        JOIN pg_class tc ON tc.oid = i.indrelid
        JOIN pg_namespace n ON n.oid = tc.relnamespace
-      WHERE ${SYS.replace(/nspname/g, 'n.nspname')}
+      WHERE ${SYS}
         AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)
       ORDER BY ic.relname`,
   );
@@ -177,14 +178,14 @@ async function detectUnsupported(source: PGliteLike): Promise<UnsupportedObject[
   const { rows: rels } = await source.query<{ schema: string; name: string; kind: string }>(
     `SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind IN ('v', 'm', 'p') AND ${SYS.replace(/nspname/g, 'n.nspname')}`,
+      WHERE c.relkind IN ('v', 'm', 'p') AND ${SYS}`,
   );
   for (const r of rels) found.push({ kind: relkinds[r.kind] ?? 'relation', name: `${r.schema}.${r.name}` });
 
   const { rows: funcs } = await source.query<{ schema: string; name: string }>(
     `SELECT n.nspname AS schema, p.proname AS name
        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE ${SYS.replace(/nspname/g, 'n.nspname')}`,
+      WHERE ${SYS}`,
   );
   for (const r of funcs) found.push({ kind: 'function', name: `${r.schema}.${r.name}` });
 
@@ -193,7 +194,7 @@ async function detectUnsupported(source: PGliteLike): Promise<UnsupportedObject[
        FROM pg_trigger t
        JOIN pg_class c ON c.oid = t.tgrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE NOT t.tgisinternal AND ${SYS.replace(/nspname/g, 'n.nspname')}`,
+      WHERE NOT t.tgisinternal AND ${SYS}`,
   );
   for (const r of trigs) found.push({ kind: 'trigger', name: `${r.schema}.${r.table}.${r.name}` });
 
@@ -202,7 +203,7 @@ async function detectUnsupported(source: PGliteLike): Promise<UnsupportedObject[
        FROM pg_policy pol
        JOIN pg_class c ON c.oid = pol.polrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE ${SYS.replace(/nspname/g, 'n.nspname')}`,
+      WHERE ${SYS}`,
   );
   for (const r of policies) found.push({ kind: 'policy', name: `${r.schema}.${r.table}.${r.name}` });
 

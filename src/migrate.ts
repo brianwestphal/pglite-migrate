@@ -1,3 +1,4 @@
+import { countRows, tableKey } from './catalog.js';
 import { quoteQualified } from './ident.js';
 import { introspectSchema } from './introspect.js';
 import { reconstructSchema } from './reconstruct.js';
@@ -15,17 +16,9 @@ import type {
 } from './types.js';
 import { validateMigration } from './validate.js';
 
-/** The qualified `schema.name` key used to match tables against cycle entries. */
-function tableKey(t: TableInfo): string {
-  return `${t.schema}.${t.name}`;
-}
-
 /** Count rows currently in a table on the given cluster. */
 async function rowCount(db: PGliteLike, table: TableInfo): Promise<number> {
-  const { rows } = await db.query<{ n: number }>(
-    `SELECT count(*)::int AS n FROM ${quoteQualified(table.schema, table.name)}`,
-  );
-  return rows[0]?.n ?? 0;
+  return countRows(db, quoteQualified(table.schema, table.name));
 }
 
 /**

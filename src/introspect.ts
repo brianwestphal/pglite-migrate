@@ -1,4 +1,4 @@
-import { quoteLiteral, quoteQualified } from './ident.js';
+import { regclassLiteral, systemSchemaFilter } from './catalog.js';
 import type {
   ColumnInfo,
   ForeignKey,
@@ -7,9 +7,6 @@ import type {
   SequenceInfo,
   TableInfo,
 } from './types.js';
-
-/** System schemas that never carry user data. */
-const SYSTEM_SCHEMA_FILTER = `nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp%'`;
 
 /**
  * Read the user schema (tables + columns + foreign keys + sequences) from a
@@ -29,7 +26,7 @@ async function introspectTables(db: PGliteLike): Promise<TableInfo[]> {
     `SELECT n.nspname AS schema, c.relname AS name
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind = 'r' AND ${SYSTEM_SCHEMA_FILTER.replace(/nspname/g, 'n.nspname')}
+      WHERE c.relkind = 'r' AND ${systemSchemaFilter('n.nspname')}
       ORDER BY n.nspname, c.relname`,
   );
 
@@ -45,7 +42,7 @@ async function introspectColumns(
   schema: string,
   table: string,
 ): Promise<ColumnInfo[]> {
-  const regclass = quoteLiteral(quoteQualified(schema, table));
+  const regclass = regclassLiteral(schema, table);
   const { rows } = await db.query<{
     name: string;
     type: string;
@@ -86,7 +83,7 @@ async function introspectForeignKeys(db: PGliteLike): Promise<ForeignKey[]> {
        JOIN pg_namespace pn ON pn.oid = pc.relnamespace
       WHERE con.contype = 'f'
         AND con.conrelid <> con.confrelid
-        AND ${SYSTEM_SCHEMA_FILTER.replace(/nspname/g, 'cn.nspname')}`,
+        AND ${systemSchemaFilter('cn.nspname')}`,
   );
   return rows.map((r) => ({ child: r.child, parent: r.parent }));
 }
@@ -99,7 +96,7 @@ async function introspectSequences(db: PGliteLike): Promise<SequenceInfo[]> {
   }>(
     `SELECT schemaname, sequencename, last_value
        FROM pg_sequences
-      WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`,
+      WHERE ${systemSchemaFilter('schemaname')}`,
   );
   return rows.map((r) => ({
     schema: r.schemaname,

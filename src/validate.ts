@@ -1,3 +1,4 @@
+import { countRows } from './catalog.js';
 import { quoteLiteral, quoteQualified } from './ident.js';
 import type {
   PGliteLike,
@@ -8,12 +9,6 @@ import type {
   ValidationLevel,
   ValidationReport,
 } from './types.js';
-
-/** Count rows in a table (version-agnostic). */
-async function countRows(db: PGliteLike, qualified: string): Promise<number> {
-  const { rows } = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${qualified}`);
-  return rows[0]?.n ?? 0;
-}
 
 /**
  * A portable per-table content digest: md5 over the rows' own text rendering,
