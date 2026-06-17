@@ -63,6 +63,25 @@ describe('reconstructSchema', () => {
     expect(rows[0].n).toBe(0);
   });
 
+  it('onUnsupported: error throws before touching the target', async () => {
+    // The source has a view (out-of-scope), so error mode must refuse.
+    await expect(reconstructSchema(source, target, { onUnsupported: 'error' })).rejects.toThrow(
+      /out-of-scope/,
+    );
+    // It failed before emitting any DDL — the target has no app-class objects.
+    const { rows } = await target.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_class WHERE relname IN ('authors', 'books', 'status')`,
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('onUnsupported: error reconstructs normally when nothing is out of scope', async () => {
+    await source.exec(`DROP VIEW author_names`);
+    const report = await reconstructSchema(source, target, { onUnsupported: 'error' });
+    expect(report.unsupported).toEqual([]);
+    expect([...report.tables].sort()).toEqual(['public.authors', 'public.books']);
+  });
+
   it('recreates working constraints, defaults, and the serial sequence', async () => {
     await reconstructSchema(source, target);
 

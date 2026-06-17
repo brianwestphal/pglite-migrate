@@ -90,6 +90,24 @@ export type ValidationLevel = 'off' | 'counts' | 'full';
  */
 export type OnExisting = 'error' | 'truncate' | 'skip';
 
+/**
+ * What standalone schema reconstruction does when the source contains
+ * out-of-scope objects (views, triggers, functions, RLS, partitioning):
+ * - `warn` — reconstruct the app-class schema anyway and report the skipped
+ *   objects so the operator knows what was not recreated (default).
+ * - `error` — refuse before touching the target, since the rebuilt schema would
+ *   be incomplete (for strict, no-surprises environments).
+ *
+ * Either way the objects are never silently dropped.
+ */
+export type OnUnsupported = 'warn' | 'error';
+
+/** Options for {@link reconstructSchema}. */
+export interface ReconstructOptions {
+  /** Behavior on out-of-scope objects in the source. Defaults to `warn`. */
+  onUnsupported?: OnUnsupported;
+}
+
 /** Options for a single migration run. */
 export interface MigrateOptions {
   /** The old-version engine, opened on the existing data. */
@@ -114,6 +132,11 @@ export interface MigrateOptions {
    * (the target schema is assumed to already exist).
    */
   reconstructSchema?: boolean;
+  /**
+   * Behavior when reconstruction finds out-of-scope objects in the source.
+   * Only consulted when `reconstructSchema` is true. Defaults to `warn`.
+   */
+  onUnsupported?: OnUnsupported;
 }
 
 /** Per-table validation outcome. */

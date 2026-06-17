@@ -1,6 +1,11 @@
 import { regclassLiteral, systemSchemaFilter } from './catalog.js';
 import { quoteIdent, quoteLiteral, quoteQualified } from './ident.js';
-import type { PGliteLike, ReconstructionReport, UnsupportedObject } from './types.js';
+import type {
+  PGliteLike,
+  ReconstructionReport,
+  ReconstructOptions,
+  UnsupportedObject,
+} from './types.js';
 
 /** Every query here aliases `pg_namespace` as `n`, so the schema filter uses `n.nspname`. */
 const SYS = systemSchemaFilter('n.nspname');
@@ -15,17 +20,35 @@ const SYS = systemSchemaFilter('n.nspname');
  * PK/UNIQUE/CHECK/FK, indexes). Out-of-scope objects (views, materialized
  * views, partitioned tables, functions, triggers, RLS policies) are **detected
  * and reported**, never silently dropped — see `docs/9`.
+ *
+ * `options.onUnsupported` (default `warn`) controls what happens when the source
+ * has out-of-scope objects: `warn` rebuilds the app-class schema anyway and
+ * lists them in the report; `error` throws **before any DDL runs**, leaving the
+ * target untouched.
  */
 export async function reconstructSchema(
   source: PGliteLike,
   target: PGliteLike,
+  options: ReconstructOptions = {},
 ): Promise<ReconstructionReport> {
+  const onUnsupported = options.onUnsupported ?? 'warn';
+
+  // Detect first so `error` can fail before touching the target.
+  const unsupported = await detectUnsupported(source);
+  if (onUnsupported === 'error' && unsupported.length > 0) {
+    const list = unsupported.map((u) => `${u.kind} ${u.name}`).join(', ');
+    throw new Error(
+      `Cannot reconstruct: source has ${unsupported.length.toString()} out-of-scope ` +
+        `object(s) that would not be recreated: ${list}. ` +
+        `Re-run with onUnsupported: 'warn' to rebuild the app-class schema anyway.`,
+    );
+  }
+
   const enums = await reconstructEnums(source, target);
   const sequences = await reconstructSequences(source, target);
   const tables = await reconstructTables(source, target);
   const constraints = await reconstructConstraints(source, target);
   const indexes = await reconstructIndexes(source, target);
-  const unsupported = await detectUnsupported(source);
   return { enums, sequences, tables, constraints, indexes, unsupported };
 }
 

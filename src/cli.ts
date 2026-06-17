@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { backupDataDir } from './backup.js';
 import { openDataDir, type OpenedCluster } from './loader.js';
 import { migrate } from './migrate.js';
-import type { OnExisting, ValidationLevel } from './types.js';
+import type { OnExisting, OnUnsupported, ValidationLevel } from './types.js';
 import { readClusterVersion } from './version.js';
 
 const USAGE = `pglite-migrate — migrate PGlite data across PostgreSQL major versions
@@ -24,6 +24,7 @@ Options:
   --backup                Back up the source data dir before migrating.
   --backup-dir <path>     Where to write the backup (default: <source>.bak-<timestamp>).
   --reconstruct-schema    Rebuild the source's app-class schema on an empty target first.
+  --on-unsupported <mode> With --reconstruct-schema, on out-of-scope objects: warn | error (default: warn)
   --dry-run               Report the plan without writing anything to the target.
   -h, --help              Show this help.
 
@@ -43,6 +44,7 @@ interface CliArgs {
   backup: boolean;
   backupDir?: string;
   reconstructSchema: boolean;
+  onUnsupported: OnUnsupported;
 }
 
 function parseValidationLevel(value: string): ValidationLevel {
@@ -53,6 +55,11 @@ function parseValidationLevel(value: string): ValidationLevel {
 function parseOnExisting(value: string): OnExisting {
   if (value === 'error' || value === 'truncate' || value === 'skip') return value;
   throw new Error(`Invalid --on-existing mode: ${value} (expected error, truncate, or skip)`);
+}
+
+function parseOnUnsupported(value: string): OnUnsupported {
+  if (value === 'warn' || value === 'error') return value;
+  throw new Error(`Invalid --on-unsupported mode: ${value} (expected warn or error)`);
 }
 
 /**
@@ -69,6 +76,7 @@ export function parseArgs(argv: string[]): CliArgs | null {
   let backup = false;
   let backupDir: string | undefined;
   let reconstructSchema = false;
+  let onUnsupported: OnUnsupported = 'warn';
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -90,6 +98,8 @@ export function parseArgs(argv: string[]): CliArgs | null {
       backup = true;
     } else if (arg === '--reconstruct-schema' || arg === '--standalone') {
       reconstructSchema = true;
+    } else if (arg === '--on-unsupported') {
+      onUnsupported = parseOnUnsupported(argv[++i] ?? '');
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option: ${arg}`);
     } else {
@@ -109,6 +119,7 @@ export function parseArgs(argv: string[]): CliArgs | null {
     backup,
     backupDir,
     reconstructSchema,
+    onUnsupported,
   };
 }
 
@@ -171,6 +182,7 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
       onExisting: args.onExisting,
       dryRun: args.dryRun,
       reconstructSchema: args.reconstructSchema,
+      onUnsupported: args.onUnsupported,
       onProgress: (e) => {
         io.err(`  ${e.table}: ${e.rowsCopied.toString()} rows`);
       },

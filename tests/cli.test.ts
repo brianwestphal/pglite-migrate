@@ -22,6 +22,7 @@ describe('parseArgs', () => {
       dryRun: false,
       backup: false,
       reconstructSchema: false,
+      onUnsupported: 'warn',
     });
   });
 
@@ -59,6 +60,16 @@ describe('parseArgs', () => {
       onExisting: 'truncate',
     });
     expect(() => parseArgs(['src', 'dst', '--on-existing', 'bogus'])).toThrow(/Invalid --on-existing/);
+  });
+
+  it('parses --on-unsupported modes (default warn) and rejects invalid ones', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ onUnsupported: 'warn' });
+    expect(parseArgs(['src', 'dst', '--on-unsupported', 'error'])).toMatchObject({
+      onUnsupported: 'error',
+    });
+    expect(() => parseArgs(['src', 'dst', '--on-unsupported', 'bogus'])).toThrow(
+      /Invalid --on-unsupported/,
+    );
   });
 
   it('parses --dry-run as a boolean flag (default false)', () => {

@@ -126,10 +126,13 @@ export async function migrate(options: MigrateOptions): Promise<MigrationReport>
   const onExisting = options.onExisting ?? 'error';
   const warnings: string[] = [];
 
-  // Standalone path: build the target's schema from the source first.
+  // Standalone path: build the target's schema from the source first. With
+  // onUnsupported: 'error', reconstructSchema throws here before any transfer.
   let reconstruction: ReconstructionReport | undefined;
   if (options.reconstructSchema === true) {
-    reconstruction = await reconstructSchema(source, target);
+    reconstruction = await reconstructSchema(source, target, {
+      onUnsupported: options.onUnsupported ?? 'warn',
+    });
     for (const u of reconstruction.unsupported) {
       warnings.push(`Unsupported ${u.kind} not reconstructed: ${u.name}.`);
     }

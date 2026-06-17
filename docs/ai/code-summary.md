@@ -20,7 +20,7 @@ src/
   validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks
   backup.ts       backupDataDir(dir): verified, timestamped copy of a data dir (rollback)
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
-  reconstruct.ts  reconstructSchema(source, target): rebuild app-class DDL via pg_get_*def (standalone mode)
+  reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); onUnsupported 'error' throws before any DDL
   loader.ts       openDataDir(dir, modulePath): open a data dir with a chosen PGlite package/alias
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster
   cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run
@@ -44,11 +44,11 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 
 - `migrate(options)` → `MigrationReport` — primary entry point (orchestrator)
 - `planMigration(source, onProgress?)` → `MigrationReport` — dry-run plan (writes nothing)
-- `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target)`
+- `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target, options?)`
 - `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
 - `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
 - `openDataDir(dir, modulePath?)`, `readClusterVersion(dataDir)`
-- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onExisting`/`dryRun`/`reconstructSchema`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`
+- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onExisting`/`dryRun`/`reconstructSchema`/`onUnsupported`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `OnUnsupported`/`ReconstructOptions`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`
 
 ## Key design points
 
