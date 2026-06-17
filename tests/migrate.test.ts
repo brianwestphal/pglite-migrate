@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { migrate } from '../src/migrate.js';
 import type { ProgressEvent } from '../src/types.js';
+import { ValidationError } from '../src/validate.js';
 import { SCHEMA_SQL, SEED_SQL } from './helpers.js';
 
 describe('migrate (orchestrator)', () => {
@@ -76,6 +77,45 @@ describe('migrate (orchestrator)', () => {
       'SELECT count(*)::text AS count FROM aaa',
     );
     expect(rows[0].count).toBe('2');
+  });
+
+  it('reports a validation failure by default without throwing (onValidationFailure: report)', async () => {
+    // A single table whose target keeps a *different* row count than the source:
+    // skip leaves the target's one row, so the count check fails.
+    await source.exec(`CREATE TABLE t (id integer PRIMARY KEY); INSERT INTO t VALUES (1), (2), (3);`);
+    await target.exec(`CREATE TABLE t (id integer PRIMARY KEY); INSERT INTO t VALUES (1);`);
+
+    const report = await migrate({ source, target, onExisting: 'skip' });
+
+    expect(report.validation?.ok).toBe(false);
+    expect(report.warnings.some((w) => /validation failed/i.test(w))).toBe(true);
+  });
+
+  it('onValidationFailure: throw raises a ValidationError carrying the report', async () => {
+    await source.exec(`CREATE TABLE t (id integer PRIMARY KEY); INSERT INTO t VALUES (1), (2), (3);`);
+    await target.exec(`CREATE TABLE t (id integer PRIMARY KEY); INSERT INTO t VALUES (1);`);
+
+    const err = await migrate({
+      source,
+      target,
+      onExisting: 'skip',
+      onValidationFailure: 'throw',
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ValidationError);
+    const ve = err as ValidationError;
+    expect(ve.report.ok).toBe(false);
+    expect(ve.report.tables.some((t) => t.table === 'public.t' && !t.ok)).toBe(true);
+    expect(ve.message).toMatch(/validation failed/i);
+  });
+
+  it('onValidationFailure: throw does not throw when validation passes', async () => {
+    await source.exec(SCHEMA_SQL);
+    await source.exec(SEED_SQL);
+    await target.exec(SCHEMA_SQL);
+
+    const report = await migrate({ source, target, onValidationFailure: 'throw' });
+    expect(report.validation?.ok).toBe(true);
   });
 
   it('returns an empty report for an empty source schema', async () => {

@@ -14,7 +14,7 @@ import type {
   TableResult,
   ValidationReport,
 } from './types.js';
-import { validateMigration } from './validate.js';
+import { validateMigration, ValidationError } from './validate.js';
 
 /** Count rows currently in a table on the given cluster. */
 async function rowCount(db: PGliteLike, table: TableInfo): Promise<number> {
@@ -124,6 +124,7 @@ export async function migrate(options: MigrateOptions): Promise<MigrationReport>
 
   const level = options.validate ?? 'counts';
   const onExisting = options.onExisting ?? 'error';
+  const onValidationFailure = options.onValidationFailure ?? 'report';
   const warnings: string[] = [];
 
   // Standalone path: build the target's schema from the source first. With
@@ -184,7 +185,11 @@ export async function migrate(options: MigrateOptions): Promise<MigrationReport>
         ...validation.tables.filter((t) => !t.ok).map((t) => t.table),
         ...validation.sequences.filter((s) => !s.ok).map((s) => s.sequence),
       ];
-      warnings.push(`Post-migration validation failed for: ${bad.join(', ')}.`);
+      const message = `Post-migration validation failed for: ${bad.join(', ')}.`;
+      // Opt-in fail-loud (FR-13.4): throw so an unattended host cannot ignore a
+      // falsy `ok`. The default `report` mode falls through to the warning.
+      if (onValidationFailure === 'throw') throw new ValidationError(validation, message);
+      warnings.push(message);
     }
   }
 

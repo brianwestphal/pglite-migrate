@@ -19,11 +19,17 @@ describe('parseArgs', () => {
       targetEngine: '@electric-sql/pglite',
       validate: 'counts',
       onExisting: 'error',
+      onValidationFailure: 'report',
       dryRun: false,
       backup: false,
       reconstructSchema: false,
       onUnsupported: 'warn',
     });
+  });
+
+  it('parses --strict as opting into onValidationFailure: throw (default report)', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ onValidationFailure: 'report' });
+    expect(parseArgs(['src', 'dst', '--strict'])).toMatchObject({ onValidationFailure: 'throw' });
   });
 
   it('honors --source-engine / --target-engine overrides', () => {

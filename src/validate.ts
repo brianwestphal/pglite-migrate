@@ -11,6 +11,23 @@ import type {
 } from './types.js';
 
 /**
+ * Thrown by {@link migrate} when post-migration validation fails and
+ * `onValidationFailure: 'throw'` was requested. Carries the full
+ * {@link ValidationReport} so the caller can inspect which tables/sequences
+ * diverged. With the default `report` mode this is never thrown.
+ */
+export class ValidationError extends Error {
+  /** The validation report whose `ok` is false. */
+  readonly report: ValidationReport;
+
+  constructor(report: ValidationReport, message?: string) {
+    super(message ?? `Post-migration validation failed (${report.level}).`);
+    this.name = 'ValidationError';
+    this.report = report;
+  }
+}
+
+/**
  * A portable per-table content digest: md5 over the rows' own text rendering,
  * ordered deterministically so row order does not affect the result. Empty
  * tables hash to a stable value. Uses only stable, version-agnostic SQL.

@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { backupDataDir, type BackupOptions } from './backup.js';
 import { openDataDir, type OpenedCluster } from './loader.js';
 import { migrate } from './migrate.js';
-import type { OnExisting, OnUnsupported, ValidationLevel } from './types.js';
+import type { OnExisting, OnUnsupported, OnValidationFailure, ValidationLevel } from './types.js';
 import { readClusterVersion } from './version.js';
 
 const USAGE = `pglite-migrate — migrate PGlite data across PostgreSQL major versions
@@ -20,6 +20,7 @@ Options:
   --source-engine <pkg>   npm module/alias for the source engine (default: @electric-sql/pglite)
   --target-engine <pkg>   npm module/alias for the target engine (default: @electric-sql/pglite)
   --validate <level>      Post-migration validation: off | counts | full (default: counts)
+  --strict                On validation failure, throw a ValidationError (default: report + exit non-zero)
   --on-existing <mode>    Non-empty target: error | truncate | skip (default: error)
   --backup                Back up the source data dir before migrating.
   --backup-dir <path>     Where to write the backup (default: <source>.bak-<timestamp>).
@@ -40,6 +41,7 @@ interface CliArgs {
   sourceEngine: string;
   targetEngine: string;
   validate: ValidationLevel;
+  onValidationFailure: OnValidationFailure;
   onExisting: OnExisting;
   dryRun: boolean;
   backup: boolean;
@@ -81,6 +83,7 @@ export function parseArgs(argv: string[]): CliArgs | null {
   let sourceEngine = '@electric-sql/pglite';
   let targetEngine = '@electric-sql/pglite';
   let validate: ValidationLevel = 'counts';
+  let onValidationFailure: OnValidationFailure = 'report';
   let onExisting: OnExisting = 'error';
   let dryRun = false;
   let backup = false;
@@ -98,6 +101,8 @@ export function parseArgs(argv: string[]): CliArgs | null {
       targetEngine = argv[++i] ?? '';
     } else if (arg === '--validate') {
       validate = parseValidationLevel(argv[++i] ?? '');
+    } else if (arg === '--strict') {
+      onValidationFailure = 'throw';
     } else if (arg === '--on-existing') {
       onExisting = parseOnExisting(argv[++i] ?? '');
     } else if (arg === '--dry-run') {
@@ -128,6 +133,7 @@ export function parseArgs(argv: string[]): CliArgs | null {
     sourceEngine,
     targetEngine,
     validate,
+    onValidationFailure,
     onExisting,
     dryRun,
     backup,
@@ -194,6 +200,7 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
       source,
       target,
       validate: args.validate,
+      onValidationFailure: args.onValidationFailure,
       onExisting: args.onExisting,
       dryRun: args.dryRun,
       reconstructSchema: args.reconstructSchema,

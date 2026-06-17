@@ -26,6 +26,7 @@ export type {
   MigrationReport,
   OnExisting,
   OnUnsupported,
+  OnValidationFailure,
   PGliteLike,
   ProgressEvent,
   QueryOptions,
@@ -41,5 +42,5 @@ export type {
   ValidationLevel,
   ValidationReport,
 } from './types.js';
-export { validateMigration } from './validate.js';
+export { validateMigration, ValidationError } from './validate.js';
 export { readClusterVersion } from './version.js';

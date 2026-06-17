@@ -17,7 +17,7 @@ src/
   introspect.ts   introspectSchema(db): tables, columns (+ generated/identity), FKs, sequences via catalog SQL
   transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback), transferCycle, applySequences
   migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report
-  validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks
+  validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks; exports ValidationError (thrown by migrate when onValidationFailure: 'throw')
   backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
   reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); onUnsupported 'error' throws before any DDL
@@ -48,7 +48,7 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 - `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
 - `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
 - `openDataDir(dir, modulePath?)`, `readClusterVersion(dataDir)`
-- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onExisting`/`dryRun`/`reconstructSchema`/`onUnsupported`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `OnUnsupported`/`ReconstructOptions`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`
+- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onValidationFailure`/`onExisting`/`dryRun`/`reconstructSchema`/`onUnsupported`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`OnValidationFailure`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `OnUnsupported`/`ReconstructOptions`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`; value export `ValidationError`
 
 ## Key design points
 

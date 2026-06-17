@@ -83,6 +83,15 @@ export interface SchemaInfo {
 export type ValidationLevel = 'off' | 'counts' | 'full';
 
 /**
+ * What `migrate` does when post-migration validation fails:
+ * - `report` — return the {@link MigrationReport} with `validation.ok === false`
+ *   and a warning; the caller decides what to do (default, non-breaking).
+ * - `throw` — raise a typed `ValidationError` (carrying the `ValidationReport`)
+ *   so an unattended host cannot accidentally ignore a falsy `ok` (FR-13.4).
+ */
+export type OnValidationFailure = 'report' | 'throw';
+
+/**
  * What to do when a target table already contains rows (re-run safety):
  * - `error` — refuse and throw, naming the offending tables (default, safest).
  * - `truncate` — empty all target tables first (FK-safe), then transfer.
@@ -122,6 +131,11 @@ export interface MigrateOptions {
   onProgress?: (event: ProgressEvent) => void;
   /** Post-migration validation depth. Defaults to `counts`. */
   validate?: ValidationLevel;
+  /**
+   * What to do when validation fails: `report` (default — return a report with
+   * `validation.ok === false`) or `throw` (raise a typed `ValidationError`).
+   */
+  onValidationFailure?: OnValidationFailure;
   /** Behavior when target tables are already populated. Defaults to `error`. */
   onExisting?: OnExisting;
   /** When true, report the plan (source row counts, cycles) and write nothing. */
