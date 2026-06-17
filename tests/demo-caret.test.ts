@@ -95,7 +95,14 @@ function keyframesBody(css: string, name: string): string | undefined {
   return css.slice(start + key.length, i - 1);
 }
 
-/** Parse a two-state ramp keyframe (rest = 0, active = V) into its forward ramp window. */
+/**
+ * Parse a two-state ramp keyframe (a "rest" state and an "active" state) into
+ * its forward ramp window. The rest state is the smaller value, the active state
+ * the larger — domotion 0.13.3 hides the reveal clip with a tiny non-zero width
+ * (`.01px`, the DM-1205 WebKit empty-clip fix) rather than a literal `0`, so the
+ * rest value is "≈0", not exactly 0. The number parse handles leading-dot
+ * decimals (`.01px`) as well as plain integers (`576px`, `0`).
+ */
 function parseRamp(body: string): Ramp {
   const groups: { stops: number[]; value: number }[] = [];
   const re = /([0-9.,%a-z\s]+?)\{([^}]*)\}/g;
@@ -106,12 +113,15 @@ function parseRamp(body: string): Ramp {
       .map((s) => s.trim())
       .filter(Boolean)
       .map((s) => (s === 'from' ? 0 : s === 'to' ? 100 : Number.parseFloat(s)));
-    const numMatch = /-?\d+(?:\.\d+)?/.exec(decl.replace(/^[^:]*:/, ''));
+    const numMatch = /-?\d*\.?\d+/.exec(decl.replace(/^[^:]*:/, ''));
     groups.push({ stops, value: numMatch ? Math.abs(Number(numMatch[0])) : 0 });
   }
-  const active = groups.find((g) => g.value > 0);
-  const rest = groups.find((g) => g.value === 0);
-  if (!active || !rest) throw new Error(`not a two-state ramp keyframe: ${body}`);
+  const sorted = [...groups].sort((a, b) => a.value - b.value);
+  const rest = sorted[0];
+  const active = sorted[sorted.length - 1];
+  if (sorted.length < 2 || active.value === rest.value) {
+    throw new Error(`not a two-state ramp keyframe: ${body}`);
+  }
   const rampEnd = Math.min(...active.stops);
   const rampStart = Math.max(...rest.stops.filter((s) => s < rampEnd));
   return { rampStart, rampEnd, value: active.value };

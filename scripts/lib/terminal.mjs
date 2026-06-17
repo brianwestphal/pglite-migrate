@@ -75,9 +75,15 @@ export function titleCardHtml({ eyebrow, headline, subtitle, height }) {
 
 /**
  * The terminal window. The command line is intentionally empty in the DOM — the
- * `typing` overlay draws it character by character — and `.out` starts visible
- * so domotion captures it, then the per-frame opacity animation hides it until
- * the command has finished "running".
+ * `typing` overlay draws it character by character — and the output starts
+ * visible so domotion captures it, then the per-frame opacity animations drive
+ * it: `.outbody` is revealed once the command has finished "running", and the
+ * wrapping `.out` is faded back out at the end of the frame so the output
+ * disappears in lockstep with the typed command (which domotion's typing overlay
+ * self-erases just before the loop) — otherwise the output would linger, visible
+ * above an already-cleared prompt, through the closing crossfade (PGLM-46). The
+ * reveal and the fade-out target two different elements so their `animation`
+ * shorthands don't clash on one node.
  */
 export function terminalHtml({ title, outputLines, height }) {
   const out = outputLines.map(lineToHtml).join('');
@@ -95,6 +101,7 @@ export function terminalHtml({ title, outputLines, height }) {
   .prompt{color:#7ee787;margin-right:9px;font-weight:600}
   .cmd{display:inline-block;min-width:1px}
   .out{margin-top:${CMD_GAP}px;opacity:1}
+  .outbody{opacity:1}
   .line{height:${LINE_H}px;line-height:${LINE_H}px;white-space:pre}
   .indent{padding-left:18px}
   .muted{color:#8b949e}.warn{color:#febc2e}.ok{color:#3fb950}.err{color:#f85149}
@@ -103,7 +110,7 @@ export function terminalHtml({ title, outputLines, height }) {
     <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">${esc(title)}</span></div>
     <div class="body">
       <div class="cmdline"><span class="prompt">$</span><span class="cmd"></span></div>
-      <div class="out">${out}</div>
+      <div class="out"><div class="outbody">${out}</div></div>
     </div>
   </div></body></html>`;
 }

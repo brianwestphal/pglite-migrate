@@ -177,6 +177,16 @@ async function buildSvg(demo, lines) {
     const revealDelay = typeMs + 350; // let the command settle before output appears
     const termDuration = revealDelay + 300 + 3200; // reveal + fade + hold
 
+    // domotion's typing overlay self-erases just before the frame ends (it holds
+    // the typed text until frameEnd-150 ms, then fades it out by frameEnd-50 ms)
+    // so the command can't bleed across the loop cut. Fade the output out over
+    // that same window so the command and its output disappear together — leaving
+    // a clean `$` prompt to crossfade back to the title — instead of the output
+    // lingering above an already-cleared prompt (PGLM-46).
+    const overlayDisappearGap = 150;
+    const outFadeMs = 100;
+    const outHideDelay = termDuration - overlayDisappearGap;
+
     await writeFile(
       config,
       JSON.stringify(
@@ -208,12 +218,20 @@ async function buildSvg(demo, lines) {
               ],
               animations: [
                 {
-                  selector: '.out',
+                  selector: '.outbody',
                   property: 'opacity',
                   from: '0',
                   to: '1',
                   duration: 300,
                   delay: revealDelay,
+                },
+                {
+                  selector: '.out',
+                  property: 'opacity',
+                  from: '1',
+                  to: '0',
+                  duration: outFadeMs,
+                  delay: outHideDelay,
                 },
               ],
             },
