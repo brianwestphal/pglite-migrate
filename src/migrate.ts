@@ -76,19 +76,6 @@ function fallbackWarning(result: TableResult): string | null {
 }
 
 /**
- * Migrate data from an old-version PGlite engine (`source`) into a new-version
- * engine (`target`) whose schema already exists.
- *
- * This is the v1 app-driven, data-only path: the host application has already
- * created its schema on `target` (typically via its normal startup
- * migrations), so the only job here is to introspect the source, transfer rows
- * in foreign-key-safe order, and re-align sequences.
- *
- * The function performs no DDL on the target and never touches on-disk files
- * directly — both clusters are passed in already open, which is what lets the
- * caller use two different PGlite major versions side by side.
- */
-/**
  * Compute what a migration *would* do without writing anything to the target:
  * tables in FK-safe order with the source row counts, which tables would be
  * deferred (FK cycles), and how many sequences would be realigned. Returns the
@@ -125,6 +112,19 @@ export async function planMigration(
   };
 }
 
+/**
+ * Migrate data from an old-version PGlite engine (`source`) into a new-version
+ * engine (`target`) whose schema already exists.
+ *
+ * This is the v1 app-driven, data-only path: the host application has already
+ * created its schema on `target` (typically via its normal startup
+ * migrations), so the only job here is to introspect the source, transfer rows
+ * in foreign-key-safe order, and re-align sequences.
+ *
+ * The function performs no DDL on the target and never touches on-disk files
+ * directly — both clusters are passed in already open, which is what lets the
+ * caller use two different PGlite major versions side by side.
+ */
 export async function migrate(options: MigrateOptions): Promise<MigrationReport> {
   const { source, target, onProgress } = options;
   if (options.dryRun === true) return planMigration(source, onProgress);
