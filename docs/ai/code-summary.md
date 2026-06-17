@@ -32,6 +32,7 @@ tests/
   backup.test.ts / swap.test.ts          Backup copy+verify; atomic swap + crash-before-swap safety
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
   loader.test.ts / cli.test.ts           openDataDir; parseArgs + run() over real temp dirs
+  diagram-svg.test.ts                    Layout guard: parses assets/diagram.svg, asserts the README diagram's flow labels don't crowd/overlap (PGLM-36)
   helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
   e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
 docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries

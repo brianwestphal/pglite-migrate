@@ -6,12 +6,9 @@ PGlite is PostgreSQL compiled to WASM. Its data directory is a real PostgreSQL c
 
 `pglite-migrate` takes the **logical** route: it runs two PGlite engines side by side — the old engine on the source data, the new engine on the target — and transfers data between them at the SQL level. The on-disk format never has to be understood. No native binaries, no `pg_upgrade`.
 
-```
-   ┌─────────────────┐        introspect → topo-sort        ┌─────────────────┐
-   │  old PGlite (PG17) │ ───────  COPY (text)  ───────────▶ │  new PGlite (PG18) │
-   │  source data dir   │ ◀─ refuses to open across majors   │  target data dir   │
-   └─────────────────┘        realign sequences · validate  └─────────────────┘
-```
+<p align="center">
+  <img src="assets/diagram.svg" alt="old PGlite (PG17) source data dir → introspect, topo-sort, COPY (text), realign sequences, validate → new PGlite (PG18) target data dir. A PG18 engine physically can't open a PG17 data directory — the failure pglite-migrate bridges." width="900">
+</p>
 
 ## Why you'd want this
 
@@ -80,56 +77,25 @@ pglite-migrate <source-data-dir> <target-data-dir> [options]
 
 ## Demos
 
-Captured verbatim from the real CLI against a live **PG17 → PG18** pair. Regenerate them any time with `npm run demo`.
+Animated terminal captures of the real CLI against a live **PG17 → PG18** pair. Each
+clip opens with a title card for the concept, then types the command and reveals its
+**verbatim** output. Regenerate them any time with `npm run demo`.
 
-### App-driven migration (PG17 → PG18)
+<p align="center">
+  <img src="assets/demos/app-driven.svg" alt="App-driven: pglite-migrate ./data-pg17 ./data-pg18 — public.authors: 3 rows, public.books: 5 rows. Done: 8 rows across 2 tables, 2 sequences aligned. Validation (counts): OK.">
+</p>
 
-```console
-$ pglite-migrate ./data-pg17 ./data-pg18 \
-    --source-engine pglite-old --target-engine pglite-new
-Migrating ./data-pg17 (PG 17) -> ./data-pg18 (PG 18)
-  public.authors: 3 rows
-  public.books: 5 rows
-Done: 8 rows across 2 tables, 2 sequences aligned.
-Validation (counts): OK.
-```
+<p align="center">
+  <img src="assets/demos/dry-run.svg" alt="Dry run: pglite-migrate ./data-pg17 ./data-pg18 --dry-run — DRY RUN, no changes will be written to the target. Plan: 8 rows across 2 tables, 2 sequences aligned.">
+</p>
 
-### Dry run — preview the plan, write nothing
+<p align="center">
+  <img src="assets/demos/standalone.svg" alt="Standalone: pglite-migrate ./data-pg17 ./data-pg18 --reconstruct-schema — rebuilds the schema then transfers 8 rows across 2 tables. Validation (counts): OK.">
+</p>
 
-```console
-$ pglite-migrate ./data-pg17 ./data-pg18 --dry-run \
-    --source-engine pglite-old --target-engine pglite-new
-Migrating ./data-pg17 (PG 17) -> ./data-pg18 (PG 18)
-DRY RUN — no changes will be written to the target.
-  public.authors: 3 rows
-  public.books: 5 rows
-Plan: 8 rows across 2 tables, 2 sequences aligned.
-```
-
-### Standalone — rebuild the schema, then migrate
-
-```console
-$ pglite-migrate ./data-pg17 ./data-pg18 --reconstruct-schema \
-    --source-engine pglite-old --target-engine pglite-new
-Migrating ./data-pg17 (PG 17) -> ./data-pg18 (PG 18)
-  public.authors: 3 rows
-  public.books: 5 rows
-Done: 8 rows across 2 tables, 2 sequences aligned.
-Validation (counts): OK.
-```
-
-### Safety — back up the source and validate every row
-
-```console
-$ pglite-migrate ./data-pg17 ./data-pg18 --backup --validate full \
-    --source-engine pglite-old --target-engine pglite-new
-Migrating ./data-pg17 (PG 17) -> ./data-pg18 (PG 18)
-Backed up source to ./data-pg17.bak
-  public.authors: 3 rows
-  public.books: 5 rows
-Done: 8 rows across 2 tables, 2 sequences aligned.
-Validation (full): OK.
-```
+<p align="center">
+  <img src="assets/demos/safety.svg" alt="Safety: pglite-migrate ./data-pg17 ./data-pg18 --backup --validate full — backs up the source to ./data-pg17.bak, transfers the data, then Validation (full): OK.">
+</p>
 
 ## Scope
 
