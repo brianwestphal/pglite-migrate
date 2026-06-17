@@ -30,7 +30,7 @@ tests/
   transfer.test.ts                       transferTable (COPY + INSERT fallback + generated exclusion), applySequences
   migrate.test.ts                        Orchestrator: totals, FK ordering, cycle handling, validation, onExisting re-run safety, dry-run
   validate.test.ts                       counts / full-digest / sequence checks
-  backup.test.ts / swap.test.ts          Backup copy+verify; atomic swap + crash-before-swap safety
+  backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked)
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
   loader.test.ts / cli.test.ts           openDataDir; parseArgs + run() over real temp dirs
   diagram-svg.test.ts                    Layout guard: parses assets/diagram.svg, asserts the README diagram's flow labels don't crowd/overlap (PGLM-36)

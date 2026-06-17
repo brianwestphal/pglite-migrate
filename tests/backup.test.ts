@@ -1,16 +1,32 @@
+import * as fsp from 'node:fs/promises';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { backupDataDir } from '../src/backup.js';
+
+// ESM module namespaces are non-configurable, so vi.spyOn can't intercept
+// node:fs/promises. Mock the module instead, making `cp` a vi.fn that passes
+// through to the real implementation unless a test overrides it.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof fsp>();
+  return { ...actual, cp: vi.fn(actual.cp) };
+});
 
 describe('backupDataDir', () => {
   let dir: string;
   let dataDir: string;
+  let realCp: typeof fsp.cp;
+
+  beforeAll(async () => {
+    const actual = await vi.importActual<typeof fsp>('node:fs/promises');
+    realCp = actual.cp;
+  });
 
   beforeEach(async () => {
+    vi.mocked(fsp.cp).mockImplementation(realCp); // reset to passthrough
     dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-backup-'));
     dataDir = join(dir, 'pgdata');
     await mkdir(join(dataDir, 'base'), { recursive: true });
@@ -48,5 +64,31 @@ describe('backupDataDir', () => {
     const dest = join(dir, 'taken');
     await mkdir(dest);
     await expect(backupDataDir(dataDir, { backupDir: dest })).rejects.toThrow(/already exists/);
+  });
+
+  it('fails verification when the backup PG_VERSION does not match the source', async () => {
+    // Corrupt PG_VERSION in the staged copy after it lands, so the copy is
+    // otherwise complete but its version no longer matches the source.
+    vi.mocked(fsp.cp).mockImplementation(async (src, dest, opts) => {
+      await realCp(src, dest, opts);
+      await writeFile(join(String(dest), 'PG_VERSION'), '999\n');
+    });
+
+    await expect(
+      backupDataDir(dataDir, { timestamp: '2026-06-16T12:00:00.000Z' }),
+    ).rejects.toThrow(/PG_VERSION mismatch/);
+  });
+
+  it('fails verification when the backup file/byte counts do not match the source', async () => {
+    // Drop a non-PG_VERSION file from the staged copy: PG_VERSION still matches,
+    // but the recursive file/byte counts diverge from the source.
+    vi.mocked(fsp.cp).mockImplementation(async (src, dest, opts) => {
+      await realCp(src, dest, opts);
+      await rm(join(String(dest), 'postgresql.conf'), { force: true });
+    });
+
+    await expect(
+      backupDataDir(dataDir, { timestamp: '2026-06-16T12:00:00.000Z' }),
+    ).rejects.toThrow(/verification failed/);
   });
 });

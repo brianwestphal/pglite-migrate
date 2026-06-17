@@ -1,11 +1,20 @@
+import * as fsp from 'node:fs/promises';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { swapIntoPlace } from '../src/swap.js';
+
+// ESM module namespaces are non-configurable, so vi.spyOn can't intercept
+// node:fs/promises. Mock the module instead, making `rename` a vi.fn that
+// passes through to the real implementation unless a test overrides it.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof fsp>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 /** Create a file-backed PGlite cluster at `dir` carrying a single marker row. */
 async function makeCluster(dir: string, marker: string): Promise<void> {
@@ -38,8 +47,15 @@ async function exists(path: string): Promise<boolean> {
 describe('swapIntoPlace', () => {
   let dir: string;
   let canonical: string;
+  let realRename: typeof fsp.rename;
+
+  beforeAll(async () => {
+    const actual = await vi.importActual<typeof fsp>('node:fs/promises');
+    realRename = actual.rename;
+  });
 
   beforeEach(async () => {
+    vi.mocked(fsp.rename).mockImplementation(realRename); // reset to passthrough
     dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-swap-'));
     canonical = join(dir, 'pgdata');
   });
@@ -93,6 +109,48 @@ describe('swapIntoPlace', () => {
     );
 
     // The canonical location was never touched and still opens.
+    expect(await readMarker(canonical)).toBe('old');
+  });
+
+  it('restores the canonical cluster and reports a cross-filesystem (EXDEV) move clearly', async () => {
+    await makeCluster(canonical, 'old');
+    const newDir = join(dir, 'pgdata.new');
+    await makeCluster(newDir, 'new');
+
+    // Fail only the forward move (newDir -> canonical) with an EXDEV code; the
+    // move-aside and the restore (both have a different source) run for real.
+    vi.mocked(fsp.rename).mockImplementation(async (src, dest) => {
+      if (src === newDir) throw Object.assign(new Error('cross-device link'), { code: 'EXDEV' });
+      return realRename(src, dest);
+    });
+
+    const ts = '2026-06-16T12:00:00.000Z';
+    await expect(swapIntoPlace(canonical, newDir, { timestamp: ts })).rejects.toThrow(
+      /different filesystem/,
+    );
+
+    // The original was moved back, so canonical still opens with its old data...
+    expect(await readMarker(canonical)).toBe('old');
+    // ...the retained-old path was undone, and the staging dir is left for retry.
+    expect(await exists(`${canonical}.old-2026-06-16T12-00-00.000Z`)).toBe(false);
+    expect(await exists(newDir)).toBe(true);
+  });
+
+  it('restores the canonical cluster and rethrows a non-EXDEV swap failure', async () => {
+    await makeCluster(canonical, 'old');
+    const newDir = join(dir, 'pgdata.new');
+    await makeCluster(newDir, 'new');
+
+    vi.mocked(fsp.rename).mockImplementation(async (src, dest) => {
+      if (src === newDir) throw Object.assign(new Error('disk on fire'), { code: 'EIO' });
+      return realRename(src, dest);
+    });
+
+    await expect(
+      swapIntoPlace(canonical, newDir, { timestamp: '2026-06-16T12:00:00.000Z' }),
+    ).rejects.toThrow(/disk on fire/);
+
+    // A generic failure is rethrown verbatim, and canonical is still restored.
     expect(await readMarker(canonical)).toBe('old');
   });
 });
