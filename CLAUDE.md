@@ -85,7 +85,10 @@ npm run test:e2e    # two-version round-trip (vitest.e2e.config.ts)
 npm run test:all    # unit + e2e
 npm run lint        # eslint src/ tests/
 npm run typecheck   # tsc --noEmit
+npm run demo        # build + capture the README CLI transcripts (scripts/demo.mjs)
 ```
+
+The README's "Demos" section is the **verbatim** output of `npm run demo` (real CLI runs against a live PG17 → PG18 pair). Re-run it and refresh that section whenever CLI output changes.
 
 ### The two-version e2e harness
 

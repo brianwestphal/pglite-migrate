@@ -46,6 +46,7 @@
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:all": "vitest run --coverage && vitest run --config vitest.e2e.config.ts",
+    "demo": "npm run build && node scripts/demo.mjs",
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist coverage node_modules/.cache",
