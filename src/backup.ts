@@ -1,5 +1,5 @@
 import { cp, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /** Options for {@link backupDataDir}. */
 export interface BackupOptions {
@@ -7,6 +7,12 @@ export interface BackupOptions {
   backupDir?: string;
   /** Override the timestamp used in the default backup name (ISO-8601). */
   timestamp?: string;
+  /**
+   * Retention bound: after a successful backup, prune the oldest timestamped
+   * `<dataDir>.bak-*` siblings so at most `keep` remain. The current run's backup
+   * is always retained. Omit (default) to keep all backups.
+   */
+  keep?: number;
 }
 
 /** Recursively count files and total bytes under a directory. */
@@ -48,6 +54,10 @@ async function exists(path: string): Promise<boolean> {
  * verified: its `PG_VERSION` must match the source (when the source has one) and
  * its recursive file and byte counts must match.
  *
+ * When `options.keep` is set, the oldest timestamped `<dataDir>.bak-*` siblings
+ * are pruned afterward so at most `keep` remain (the current run's backup is
+ * always retained).
+ *
  * @returns the path of the verified backup directory.
  * @throws if the backup directory already exists or verification fails.
  */
@@ -79,5 +89,29 @@ export async function backupDataDir(dataDir: string, options: BackupOptions = {}
         `source has ${src.files.toString()}/${src.bytes.toString()}`,
     );
   }
+
+  if (options.keep !== undefined) await pruneBackups(dataDir, backupDir, options.keep);
   return backupDir;
+}
+
+/**
+ * Prune the oldest timestamped `<dataDir>.bak-*` siblings so at most `keep`
+ * remain. The current run's backup is never removed, even if `keep` would
+ * otherwise exclude it. Names are sorted lexicographically, which matches
+ * chronological order for the sanitized ISO-8601 timestamps used in the names.
+ */
+async function pruneBackups(dataDir: string, currentBackup: string, keep: number): Promise<void> {
+  const parent = dirname(dataDir);
+  const prefix = `${basename(dataDir)}.bak-`;
+  const entries = await readdir(parent);
+  const backups = entries
+    .filter((e) => e.startsWith(prefix) && !e.endsWith('.partial'))
+    .sort(); // oldest first
+  const current = basename(currentBackup);
+  // Everything older than the newest `keep` is excess.
+  const excess = backups.slice(0, Math.max(0, backups.length - Math.max(0, keep)));
+  for (const name of excess) {
+    if (name === current) continue; // never delete the current run's backup
+    await rm(join(parent, name), { recursive: true, force: true });
+  }
 }

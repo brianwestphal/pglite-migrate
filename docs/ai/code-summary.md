@@ -18,7 +18,7 @@ src/
   transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback), transferCycle, applySequences
   migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report
   validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks
-  backup.ts       backupDataDir(dir): verified, timestamped copy of a data dir (rollback)
+  backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
   reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); onUnsupported 'error' throws before any DDL
   loader.ts       openDataDir(dir, modulePath): open a data dir with a chosen PGlite package/alias

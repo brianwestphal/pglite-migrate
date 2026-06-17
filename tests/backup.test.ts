@@ -1,7 +1,7 @@
 import * as fsp from 'node:fs/promises';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -64,6 +64,37 @@ describe('backupDataDir', () => {
     const dest = join(dir, 'taken');
     await mkdir(dest);
     await expect(backupDataDir(dataDir, { backupDir: dest })).rejects.toThrow(/already exists/);
+  });
+
+  it('keep prunes the oldest timestamped backups beyond n, retaining the current run', async () => {
+    const ts = (day: string) => `2026-06-${day}T12:00:00.000Z`;
+    await backupDataDir(dataDir, { timestamp: ts('14') });
+    await backupDataDir(dataDir, { timestamp: ts('15') });
+    await backupDataDir(dataDir, { timestamp: ts('16') });
+    const current = await backupDataDir(dataDir, { timestamp: ts('17'), keep: 2 });
+
+    const remaining = (await readdir(dir)).filter((e) => e.startsWith('pgdata.bak-')).sort();
+    // The two oldest (14, 15) are pruned; the newest two (16 + current 17) remain.
+    expect(remaining).toEqual([
+      'pgdata.bak-2026-06-16T12-00-00.000Z',
+      'pgdata.bak-2026-06-17T12-00-00.000Z',
+    ]);
+    expect(basename(current)).toBe('pgdata.bak-2026-06-17T12-00-00.000Z');
+  });
+
+  it('never deletes the current run backup even when keep would exclude it', async () => {
+    const ts = (day: string) => `2026-06-${day}T12:00:00.000Z`;
+    await backupDataDir(dataDir, { timestamp: ts('16') });
+    await backupDataDir(dataDir, { timestamp: ts('17') });
+    // The current backup uses an OLDER timestamp and keep=1: it sorts as excess
+    // but the prune must force-retain it, so two dirs survive (current + newest).
+    await backupDataDir(dataDir, { timestamp: ts('15'), keep: 1 });
+
+    const remaining = (await readdir(dir)).filter((e) => e.startsWith('pgdata.bak-')).sort();
+    expect(remaining).toEqual([
+      'pgdata.bak-2026-06-15T12-00-00.000Z',
+      'pgdata.bak-2026-06-17T12-00-00.000Z',
+    ]);
   });
 
   it('fails verification when the backup PG_VERSION does not match the source', async () => {

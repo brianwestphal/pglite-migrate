@@ -43,7 +43,7 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 - `docs/7` COPY-text — **done** (PGLM-22). Real gap was only `json` whitespace; everything else already round-tripped.
 - `docs/8` FK-cycle deferred constraints — **done** (PGLM-23).
 - `docs/9` standalone reconstruction — **done** (PGLM-25); the `onUnsupported: 'warn' | 'error'` option (default `warn`, `error` throws before any DDL) is built and surfaced through `migrate`/CLI, and doc 9's report shape is reconciled with `types.ts` (PGLM-38).
-- `docs/10` backup — **done** (PGLM-26, opt-in CLI); `--keep <n>` retention (FR-10.6) is **not yet built**.
+- `docs/10` backup — **done** (PGLM-26, opt-in CLI); `--keep <n>` retention (FR-10.6) built (PGLM-39).
 - `docs/11` atomic swap — **done** as `swapIntoPlace` primitive (PGLM-27).
 - `docs/12` dry-run — **done** (PGLM-28).
 - `docs/13` validation — **done** (PGLM-29, default `counts`); failure marks `validation.ok=false` and the CLI exits non-zero, but `migrate` does **not** throw a typed `ValidationError` (FR-13.4 open decision).
@@ -53,7 +53,7 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 
 1. ~~Verified cross-major run + new-major-refuses-old-dir.~~ **Done (PGLM-19)** — aliases at PG17 (0.4.3) / PG18 (0.5.3); the e2e suite is cross-major and `cross-major.test.ts` proves the refusal on disk.
 2. Upsert/`ON CONFLICT` re-run strategy — deferred (needs PK/unique introspection; doc 14).
-3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path; `--keep <n>` backup retention (FR-10.6) — follow-ups in docs 10/11.
+3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path — follow-ups in docs 10/11.
 4. Open product decisions flagged in docs 7–14 (e.g. backup default-on, identity-vs-serial normalization, validation throw-vs-report).
 
 ## Maintenance triggers

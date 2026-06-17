@@ -86,6 +86,14 @@ describe('parseArgs', () => {
     });
   });
 
+  it('parses --keep as a positive integer (implies backup) and rejects invalid values', () => {
+    expect(parseArgs(['src', 'dst', '--keep', '3'])).toMatchObject({ keep: 3, backup: true });
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ keep: undefined });
+    expect(() => parseArgs(['src', 'dst', '--keep', '0'])).toThrow(/Invalid --keep/);
+    expect(() => parseArgs(['src', 'dst', '--keep', '-1'])).toThrow(/Invalid --keep/);
+    expect(() => parseArgs(['src', 'dst', '--keep', 'abc'])).toThrow(/Invalid --keep/);
+  });
+
   it('parses --reconstruct-schema (and the --standalone alias)', () => {
     expect(parseArgs(['src', 'dst'])).toMatchObject({ reconstructSchema: false });
     expect(parseArgs(['src', 'dst', '--reconstruct-schema'])).toMatchObject({

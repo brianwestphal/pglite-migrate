@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 
-import { backupDataDir } from './backup.js';
+import { backupDataDir, type BackupOptions } from './backup.js';
 import { openDataDir, type OpenedCluster } from './loader.js';
 import { migrate } from './migrate.js';
 import type { OnExisting, OnUnsupported, ValidationLevel } from './types.js';
@@ -23,6 +23,7 @@ Options:
   --on-existing <mode>    Non-empty target: error | truncate | skip (default: error)
   --backup                Back up the source data dir before migrating.
   --backup-dir <path>     Where to write the backup (default: <source>.bak-<timestamp>).
+  --keep <n>              Retain at most n timestamped backups; prune the oldest (default: keep all).
   --reconstruct-schema    Rebuild the source's app-class schema on an empty target first.
   --on-unsupported <mode> With --reconstruct-schema, on out-of-scope objects: warn | error (default: warn)
   --dry-run               Report the plan without writing anything to the target.
@@ -43,6 +44,7 @@ interface CliArgs {
   dryRun: boolean;
   backup: boolean;
   backupDir?: string;
+  keep?: number;
   reconstructSchema: boolean;
   onUnsupported: OnUnsupported;
 }
@@ -62,6 +64,14 @@ function parseOnUnsupported(value: string): OnUnsupported {
   throw new Error(`Invalid --on-unsupported mode: ${value} (expected warn or error)`);
 }
 
+function parseKeep(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`Invalid --keep value: ${value} (expected a positive integer)`);
+  }
+  return n;
+}
+
 /**
  * Parse CLI argv into structured args, or `null` when usage should be printed
  * (`-h`/`--help`, or fewer than two positionals). Throws on an unknown option.
@@ -75,6 +85,7 @@ export function parseArgs(argv: string[]): CliArgs | null {
   let dryRun = false;
   let backup = false;
   let backupDir: string | undefined;
+  let keep: number | undefined;
   let reconstructSchema = false;
   let onUnsupported: OnUnsupported = 'warn';
 
@@ -95,6 +106,9 @@ export function parseArgs(argv: string[]): CliArgs | null {
       backup = true;
     } else if (arg === '--backup-dir') {
       backupDir = argv[++i] ?? '';
+      backup = true;
+    } else if (arg === '--keep') {
+      keep = parseKeep(argv[++i] ?? '');
       backup = true;
     } else if (arg === '--reconstruct-schema' || arg === '--standalone') {
       reconstructSchema = true;
@@ -118,6 +132,7 @@ export function parseArgs(argv: string[]): CliArgs | null {
     dryRun,
     backup,
     backupDir,
+    keep,
     reconstructSchema,
     onUnsupported,
   };
@@ -166,10 +181,10 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
   let target: OpenedCluster | undefined;
   try {
     if (args.backup && !args.dryRun) {
-      const path = await backupDataDir(
-        args.source,
-        args.backupDir !== undefined ? { backupDir: args.backupDir } : {},
-      );
+      const backupOptions: BackupOptions = {};
+      if (args.backupDir !== undefined) backupOptions.backupDir = args.backupDir;
+      if (args.keep !== undefined) backupOptions.keep = args.keep;
+      const path = await backupDataDir(args.source, backupOptions);
       io.err(`Backed up source to ${path}`);
     }
     source = await openDataDir(args.source, args.sourceEngine);
