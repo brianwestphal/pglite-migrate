@@ -1,6 +1,6 @@
 {
   "name": "pglite-migrate",
-  "version": "0.0.2",
+  "version": "1.0.0",
   "description": "Migrate PGlite data across PostgreSQL major versions (e.g. PG17 -> PG18) by transferring data between two PGlite instances, without native binaries or pg_upgrade.",
   "type": "module",
   "license": "MIT",
