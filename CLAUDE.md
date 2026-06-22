@@ -112,9 +112,9 @@ The README's "Demos" section embeds **animated terminal SVGs** under `assets/dem
 
 The two aliases now resolve to **two different Postgres majors** — `@electric-sql/pglite@0.4.x` bundles PG17, `@0.5.x` bundles PG18 — so the e2e suite is a **genuine cross-major run** (PG17 → PG18), not a same-major round-trip. `tests/e2e/cross-major.test.ts` additionally proves the motivating failure on disk: a PG18 engine genuinely refuses to open a PG17 data directory. **Do not** collapse the two aliases into one import — the two-engine, two-major shape is the whole point (NFR-6.3). When a future PGlite ships PG19, bump only `pglite-new` and the identical suite re-targets the new pair.
 
-## Testing Philosophy
+## Testing Notes
 
-- **Double coverage**: pure logic (e.g. `topologicalSort`, `readClusterVersion`) gets focused unit tests; anything that touches a real cluster is proven end to end against real PGlite in the e2e round-trip. Unit tests alone can pass while catalog SQL is subtly wrong against a real engine.
+- Pure logic (e.g. `topologicalSort`, `readClusterVersion`) gets focused unit tests; anything that touches a real cluster is proven end to end against real PGlite in the e2e round-trip — unit tests alone can pass while catalog SQL is subtly wrong against a real engine.
 - **No mocking the database**: there is no meaningful mock for catalog SQL or row transfer — the system under test *is* the interaction with a real PGlite. Unit tests that need a cluster use an in-memory `new PGlite()`; the e2e uses two aliased versions.
 - **Every new migration capability needs both**: a pure unit test for its logic where possible, and an e2e assertion that a real migration produces the right rows/sequences/constraints.
 
@@ -126,9 +126,7 @@ The two aliases now resolve to **two different Postgres majors** — `@electric-
 - One primary export per file; keep files focused and short. Use sub-folders when a concern grows.
 - **Always use American-English spelling** in code, comments, identifiers, messages, docs, and commit messages (`color`, `behavior`, `canceled`, `analyze`, `initialize`, `gray`).
 
-## Ticket-Driven Work
-
-This project is intended to be driven via Hot Sheet tickets once its dedicated channel/instance is set up. When given substantial work directly, create tickets before implementing; always file follow-up tickets for known gaps (e.g. the deferred schema-reconstruction mode, COPY-text fidelity) rather than leaving them undocumented. Don't leave placeholder UI/text, TODO/FIXME comments, or specced-but-unbuilt requirements without a corresponding follow-up ticket.
+## Implementation Status
 
 ### Implemented since v1 (see docs 7–14 and the matching tickets)
 
@@ -144,3 +142,58 @@ This project is intended to be driven via Hot Sheet tickets once its dedicated c
 - **Upsert/`ON CONFLICT` re-run strategy** — needs PK/unique introspection (`docs/14`).
 - **CLI orchestration of the full backup→migrate→validate→swap on-startup-upgrade flow**, stale-`.new` cleanup, reflink backup fast-path (`docs/10`/`docs/11`).
 - **Open product decisions** flagged in docs 7–14 (backup default-on, identity-vs-serial normalization, validation throw-vs-report, etc.).
+
+<!-- hotsheet:begin section=ticket-driven-work v=1 -->
+## Ticket-Driven Work
+
+When the user gives you work directly (not via the Hot Sheet channel or events), create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work.
+
+- **Do create tickets** for: features, bug fixes, refactoring, multi-step tasks, anything changing code. **Don't** for: simple questions, git commits, quick lookups, trivial one-liners. **When in doubt, create them.**
+- Create via the Hot Sheet API (prefer the `hotsheet_*` MCP tools), mark Up Next, then work through them: set status `started` → implement → set `completed` with notes.
+- **Always create follow-up tickets** for incomplete work (unfinished steps, open design questions, known gaps, designed-but-unbuilt features). If it's not in a ticket, it's forgotten.
+- **Incomplete-work checklist** — before marking a ticket `completed`, file follow-ups for any: (1) UI placeholder text ("coming soon"), (2) TODO/FIXME comments, (3) documented-but-unimplemented requirements, (4) empty/stub functions returning mock data.
+- **Use FEEDBACK NEEDED before deferring or asking about follow-ups.** When about to (a) defer a ticket needing more work, (b) ask whether to file follow-ups, or (c) close with a question buried in notes — DON'T. Leave the ticket `started`, add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), signal channel done, and wait. It's the only reliable way to surface a question.
+<!-- hotsheet:end section=ticket-driven-work -->
+
+<!-- hotsheet:begin section=testing-philosophy v=1 -->
+## Testing Philosophy
+
+- **Double coverage**: every feature covered by both unit tests AND E2E tests. Unit = logic in isolation; E2E = real user flows through the running app with minimal mocking.
+- **Unit tests**: Mock external deps (filesystem, network), test real logic.
+- **E2E tests**: As much as possible, use test automation tools to run realistic, user-facing flows. Minimize mocks.
+- **Coverage**: Merge all test coverage (e.g. unit, E2E server, E2E browser) into one report. Low-coverage files should get more of both test types. Aim for 100% coverage of code lines, 100% coverage of branches, and 100% of features described in the requirements documentation.
+- **Manual test plan**: keep a manual test plan doc (e.g. `docs/manual-test-plan.md`) for features that can't be reliably automated. **Keep it up to date** — add such features there; when you add automated coverage for a previously-manual item, remove it and note it in an "Automated Coverage Summary".
+- **Always fix lint and type errors before finishing**: Fix as you go, don't batch.
+
+<!-- hotsheet:begin specifics=testing-philosophy v=1 -->
+### This project's test setup
+
+- **Unit tests** (`tests/**/*.test.ts`, excluding `tests/e2e/`): `vitest` (config `vitest.config.ts`, globals on, 30s timeout). Tests that need a cluster boot an in-memory `new PGlite()` rather than mocking. Shared schema/seed fixtures live in `tests/helpers.ts`.
+- **E2E tests** (`tests/e2e/**/*.test.ts`, config `vitest.e2e.config.ts`): the two-version cross-major harness (`pglite-old` PG17 → `pglite-new` PG18, `forks` pool, 60s timeout). See **The two-version e2e harness** above for the alias mechanics.
+- **Commands**: unit `npm run test` · E2E `npm run test:e2e` · both `npm run test:all` · lint `npm run lint` · types `npm run typecheck`.
+- **Coverage**: emitted by the unit run only — `v8`, `text`+`lcov` into `coverage/`, over `src/**` minus `src/cli.ts` (the CLI is covered by `tests/cli.test.ts` behaviorally, not by line coverage). There is **no** merged unit+e2e coverage report.
+- No `docs/manual-test-plan.md` exists yet — create one only if a feature ever resists automation.
+<!-- hotsheet:end specifics=testing-philosophy -->
+<!-- hotsheet:end section=testing-philosophy -->
+
+<!-- hotsheet:begin section=requirements-documentation v=1 -->
+## Requirements Documentation
+
+Keep human-readable requirements documents as the source of truth for what the project does, and **keep them up to date in the same change as the code** (add/remove/modify a requirement → update its doc). Create new docs for major new functional areas. Cross-reference related docs with relative links.
+
+### AI Summaries
+
+Maintain two synthesis docs an AI assistant reads at the start of a fresh session — keep them in sync with reality (source doc/code wins on conflict), and prefer small targeted edits over rewrites:
+
+- A **codebase map** — directory tree, entry points, data schema, build, tests, settings, and a "where do I look for X" index. Update it in the same change when you add a file or directory, add a route/endpoint, change the schema, add a client module, or add a setting key.
+- A **requirements summary** — a synthesized view of every requirements doc with status markers (e.g. Shipped / Partial / Design only / Deferred). Update it in the same change when you add a requirements doc, ship a design-only feature, or defer/regress a shipped one.
+
+<!-- hotsheet:begin specifics=requirements-documentation v=1 -->
+### This project's docs layout
+
+- **Requirements docs**: `docs/`, numbered for linear reading (`docs/N-topic.md`, e.g. `docs/2-data-migration.md`), with `FR-`/`NFR-` markers and relative cross-links. `docs/ARCHITECTURE.md` covers components and data flow. (See the **Documentation** list under Architecture above for the full index.)
+- **Codebase map**: `docs/ai/code-summary.md` — directory tree, entry points, and a "where do I look for X" index.
+- **Requirements summary**: `docs/ai/requirements-summary.md` — every requirements doc with Shipped / Partial / Design only / Deferred status markers.
+- Keep both `docs/ai/` summaries in sync in the same change as the code (source doc/code wins on conflict).
+<!-- hotsheet:end specifics=requirements-documentation -->
+<!-- hotsheet:end section=requirements-documentation -->
