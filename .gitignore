@@ -3,13 +3,7 @@ dist
 coverage/
 .coverage-tmp/
 .DS_Store
-.hotsheet/
-.glassbox/
-.cursor/
-.claude/settings.local.json
 *.tsbuildinfo
-.claude
-.mcp.json
 
 # Scratch PGlite data directories created by tests / manual runs
 tmp/
@@ -17,3 +11,10 @@ tmp/
 
 # Release-script state (scripts/release.sh)
 .release-state.json
+
+.mcp.json
+.claude/settings.local.json
+/.hotsheet/*
+!/.hotsheet/settings.json
+/.glassbox/*
+!/.glassbox/settings.json

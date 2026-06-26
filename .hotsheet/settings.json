@@ -1,0 +1,102 @@
+{
+  "appName": "PGLite Migrate",
+  "ticketPrefix": "PGLM",
+  "terminals": [
+    {
+      "id": "claude",
+      "command": "{{claudeCommand}}",
+      "name": "Claude",
+      "lazy": false,
+      "theme": "github-dark",
+      "fontFamily": "system",
+      "fontSize": 17
+    }
+  ],
+  "custom_commands": [
+    {
+      "name": "Commit Changes",
+      "prompt": "make a commit message for the recently completed tickets, without wrapping long lines.  Don't include any co-authored by Anthropic type lines in the commit message.  add all unstaged changes to the git commit.  git commit with the message you generated but don't push",
+      "icon": "send",
+      "color": "#3b82f6"
+    },
+    {
+      "name": "Update Requirements",
+      "prompt": "Update the requirements docs as appropriate",
+      "icon": "file-text",
+      "color": "#6b7280"
+    },
+    {
+      "type": "group",
+      "name": "quality",
+      "children": [
+        {
+          "name": "Reqs ↔︎ Code",
+          "prompt": "/check-requirements-against-code",
+          "icon": "arrow-left-right",
+          "color": "#ec4899"
+        },
+        {
+          "name": "Analyze Code Quality",
+          "prompt": "/analyze-code-quality",
+          "icon": "circle-check-big",
+          "color": "#8b5cf6"
+        },
+        {
+          "name": "Check Code Hygene",
+          "prompt": "/check-code-hygiene",
+          "icon": "soap-dispenser-droplet",
+          "color": "#f97316"
+        },
+        {
+          "name": "Everything",
+          "prompt": "do these sequentially, creating follow up tickets for all concerns encountered:\n/check-requirements-against-code\n/check-code-hygiene\n/analyze-code-quality\n",
+          "icon": "balloon",
+          "color": "#e5e7eb"
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "name": "GIT",
+      "children": [
+        {
+          "name": "git status",
+          "prompt": "git status",
+          "icon": "git-compare",
+          "color": "#e5e7eb",
+          "target": "shell",
+          "autoShowLog": true
+        },
+        {
+          "name": "git push",
+          "prompt": "git push",
+          "icon": "git-compare-arrows",
+          "target": "shell"
+        }
+      ]
+    },
+    {
+      "name": "Prep Major Release",
+      "prompt": "We've made a lot of changes.  Review and update the README.md file as necessary.  Make sure it stays compelling and advertises our most important and interesting features.\n\nReview the demo modes and revise those if you think new / different / fewer screenshots are needed.  Then re-capture all of the demos (always do all of them in case minor details changed).\n",
+      "icon": "wand",
+      "color": "#14b8a6"
+    }
+  ],
+  "auto_context": [
+    {
+      "type": "category",
+      "key": "feature",
+      "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nAdd a new requirements document.\n\nAsk clarifying questions as needed.\n\nBe sure to create follow up tickets as needed as well.\n"
+    },
+    {
+      "type": "category",
+      "key": "requirement_change",
+      "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nUpdate requirements documents as appropriate.\n\nAsk clarifying questions as needed.\n"
+    },
+    {
+      "type": "category",
+      "key": "bug",
+      "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nEvaluate current tests and add unit tests or test automation to protected against this kind of bug going forward, if applicable.\n"
+    }
+  ]
+}

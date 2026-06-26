@@ -118,6 +118,14 @@ The two aliases now resolve to **two different Postgres majors** — `@electric-
 - **No mocking the database**: there is no meaningful mock for catalog SQL or row transfer — the system under test *is* the interaction with a real PGlite. Unit tests that need a cluster use an in-memory `new PGlite()`; the e2e uses two aliased versions.
 - **Every new migration capability needs both**: a pure unit test for its logic where possible, and an e2e assertion that a real migration produces the right rows/sequences/constraints.
 
+## Code Search
+
+### Code search (prefer ast-grep for structure)
+
+For **structural / syntax-aware** searches over source (this codebase is TypeScript-only — `.ts`), use **ast-grep** (the `ast-grep` skill, or the CLI: `ast-grep run --lang ts -p '<pattern>' src/`) rather than text grep — it matches the AST, so it skips comments/strings and catches multi-line/nested shapes. This is the same mindset as the project's "**validate at trust boundaries, don't assert**" and "**all SQL identifiers go through `src/ident.ts`**" conventions (§ Conventions): the things worth policing are *shapes*, not strings. Good fits here: `$A as $B` and `$A as unknown as $B` casts (the only sanctioned cast is the `db as unknown as PGliteLike` test bridge — ast-grep makes every other cast visible), `JSON.parse($X) as $T`, inline `query<{ … }>()` row-type literals on `PGliteLike`, raw-SQL template literals that splice an identifier without an `src/ident.ts` quoting helper, specific call/await shapes (`db.query(...)`, `db.exec(...)`), and codemod-style rewrites. There is no `.tsx` or `.rs` here, so **always `--lang ts`**.
+
+Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what it's best at: literal strings (e.g. `FEEDBACK NEEDED`, `COPY`, SQL keywords), identifier/symbol lookups, **filenames**, and **non-code files** (the numbered `docs/*.md`, `package.json`, `CHANGELOG.md`, logs) — there AST has nothing to match and text is simpler + faster.
+
 ## Conventions
 
 - ESM modules (`"type": "module"`); import paths use the `.js` extension (TypeScript ESM convention).
@@ -125,6 +133,11 @@ The two aliases now resolve to **two different Postgres majors** — `@electric-
 - Raw SQL only — no ORM. All identifiers spliced into SQL go through `src/ident.ts` quoting helpers (catalog names are trusted but can still need quoting).
 - One primary export per file; keep files focused and short. Use sub-folders when a concern grows.
 - **Always use American-English spelling** in code, comments, identifiers, messages, docs, and commit messages (`color`, `behavior`, `canceled`, `analyze`, `initialize`, `gray`).
+
+## Git Workflow
+
+- **Commit as needed** without asking — commit freely whenever work reaches a sensible checkpoint. (Branch first if on `main` for substantial work.)
+- **Never `git push` without explicit permission.** Pushing is outward-facing; always ask first.
 
 ## Implementation Status
 
