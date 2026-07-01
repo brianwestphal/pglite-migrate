@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { applySequences, transferTable } from '../src/transfer.js';
+import { applySequences, transferCycle, transferTable } from '../src/transfer.js';
 import type { PGliteLike, QueryOptions, SequenceInfo, TableInfo } from '../src/types.js';
 
 /** Build the structural cluster handle the transfer functions expect. */
@@ -259,5 +259,114 @@ describe('applySequences', () => {
     const big = await target.query<{ v: string }>(`SELECT nextval('s_big')::text AS v`);
     expect(str.rows[0].v).toBe('501');
     expect(big.rows[0].v).toBe('9001');
+  });
+});
+
+describe('transferCycle (failure-then-rollback)', () => {
+  let source: PGlite;
+  let target: PGlite;
+
+  // A mutually-referential (cyclic) pair with default NOT DEFERRABLE FKs, so
+  // transferCycle must transiently flip them to DEFERRABLE and restore them.
+  const CYCLIC_DDL = `
+    CREATE TABLE a (id integer PRIMARY KEY, b_id integer);
+    CREATE TABLE b (id integer PRIMARY KEY, a_id integer);
+    ALTER TABLE a ADD CONSTRAINT a_b_fk FOREIGN KEY (b_id) REFERENCES b(id);
+    ALTER TABLE b ADD CONSTRAINT b_a_fk FOREIGN KEY (a_id) REFERENCES a(id);
+  `;
+
+  const tableA: TableInfo = {
+    schema: 'public',
+    name: 'a',
+    columns: [
+      { name: 'id', type: 'integer' },
+      { name: 'b_id', type: 'integer' },
+    ],
+  };
+  const tableB: TableInfo = {
+    schema: 'public',
+    name: 'b',
+    columns: [
+      { name: 'id', type: 'integer' },
+      { name: 'a_id', type: 'integer' },
+    ],
+  };
+
+  beforeEach(async () => {
+    source = freshDb();
+    target = freshDb();
+    await source.exec(CYCLIC_DDL);
+    await target.exec(CYCLIC_DDL);
+    // A genuine data cycle: a.b_id -> b, b.a_id -> a.
+    await source.exec(`
+      INSERT INTO a (id, b_id) VALUES (1, NULL);
+      INSERT INTO b (id, a_id) VALUES (1, 1);
+      UPDATE a SET b_id = 1 WHERE id = 1;
+    `);
+  });
+
+  afterEach(async () => {
+    await source.close();
+    await target.close();
+  });
+
+  /** Read the deferrability flag of both FK constraints from the target. */
+  async function fkDeferrable(): Promise<boolean[]> {
+    const { rows } = await target.query<{ condeferrable: boolean }>(
+      `SELECT condeferrable FROM pg_constraint
+        WHERE contype = 'f' AND conrelid IN ('a'::regclass, 'b'::regclass)
+        ORDER BY conname`,
+    );
+    return rows.map((r) => r.condeferrable);
+  }
+
+  it('rolls back, rethrows, and restores flipped constraints when the commit fails', async () => {
+    const execLog: string[] = [];
+    // Wrap the target so COMMIT fails mid-cycle; everything else passes through
+    // to the real cluster (so the constraint flip/restore actually happens).
+    const failingTarget: PGliteLike = {
+      query: <R = Record<string, unknown>>(q: string, params?: unknown[], options?: QueryOptions) =>
+        target.query<R>(q, params, options),
+      exec: (q: string) => {
+        execLog.push(q.trim());
+        if (/^\s*COMMIT/i.test(q)) return Promise.reject(new Error('COMMIT failed for test'));
+        return target.exec(q);
+      },
+    };
+
+    await expect(transferCycle(source, failingTarget, [tableA, tableB])).rejects.toThrow(
+      'COMMIT failed for test',
+    );
+
+    // ROLLBACK was issued after the failed COMMIT.
+    expect(execLog).toContain('ROLLBACK');
+    // No half-inserted cyclic rows survived the rollback.
+    const { rows: aRows } = await target.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM a`,
+    );
+    expect(aRows[0].count).toBe('0');
+    // The constraints flipped to DEFERRABLE were restored to NOT DEFERRABLE.
+    expect(await fkDeferrable()).toEqual([false, false]);
+  });
+
+  it('a clean re-run after the failure still succeeds (failure-then-retry)', async () => {
+    const failingTarget: PGliteLike = {
+      query: <R = Record<string, unknown>>(q: string, params?: unknown[], options?: QueryOptions) =>
+        target.query<R>(q, params, options),
+      exec: (q: string) =>
+        /^\s*COMMIT/i.test(q) ? Promise.reject(new Error('boom')) : target.exec(q),
+    };
+    await expect(transferCycle(source, failingTarget, [tableA, tableB])).rejects.toThrow('boom');
+
+    // Retry against a healthy target handle: the cycle transfers cleanly and the
+    // constraints end up NOT DEFERRABLE again.
+    const results = await transferCycle(source, target, [tableA, tableB]);
+
+    expect(results.map((r) => r.rowsCopied)).toEqual([1, 1]);
+    const { rows } = await target.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM a`,
+    );
+    expect(rows[0].count).toBe('1');
+    expect(await fkDeferrable()).toEqual([false, false]);
   });
 });
