@@ -1,6 +1,8 @@
 {
   "appName": "PGLite Migrate",
   "ticketPrefix": "PGLM",
+  "secret": "ece65a173d0c7772374a95efee326d57",
+  "secretPathHash": "ec34f4e61dacf6fe",
   "terminals": [
     {
       "id": "claude",
@@ -17,13 +19,15 @@
       "name": "Commit Changes",
       "prompt": "make a commit message for the recently completed tickets, without wrapping long lines.  Don't include any co-authored by Anthropic type lines in the commit message.  add all unstaged changes to the git commit.  git commit with the message you generated but don't push",
       "icon": "send",
-      "color": "#3b82f6"
+      "color": "#3b82f6",
+      "id": "b23b5f93-173b-4a5d-8d5f-196757313d15"
     },
     {
       "name": "Update Requirements",
       "prompt": "Update the requirements docs as appropriate",
       "icon": "file-text",
-      "color": "#6b7280"
+      "color": "#6b7280",
+      "id": "b38e3a79-bb00-4717-acbd-8fe50f66789b"
     },
     {
       "type": "group",
@@ -33,27 +37,32 @@
           "name": "Reqs ↔︎ Code",
           "prompt": "/check-requirements-against-code",
           "icon": "arrow-left-right",
-          "color": "#ec4899"
+          "color": "#ec4899",
+          "id": "e1d841ff-966c-4b98-aaf0-e785cbe78ea5"
         },
         {
           "name": "Analyze Code Quality",
           "prompt": "/analyze-code-quality",
           "icon": "circle-check-big",
-          "color": "#8b5cf6"
+          "color": "#8b5cf6",
+          "id": "e656ba7c-9040-41f1-8bcf-ff9834045e54"
         },
         {
           "name": "Check Code Hygene",
           "prompt": "/check-code-hygiene",
           "icon": "soap-dispenser-droplet",
-          "color": "#f97316"
+          "color": "#f97316",
+          "id": "3b970917-a4cb-4095-b01e-a27b8ec1d5eb"
         },
         {
           "name": "Everything",
           "prompt": "do these sequentially, creating follow up tickets for all concerns encountered:\n/check-requirements-against-code\n/check-code-hygiene\n/analyze-code-quality\n",
           "icon": "balloon",
-          "color": "#e5e7eb"
+          "color": "#e5e7eb",
+          "id": "e276f7f9-d2d3-4316-8a37-b4c280a2f20a"
         }
-      ]
+      ],
+      "id": "423eba99-3ff6-4cbc-8e31-5fd9902de7db"
     },
     {
       "type": "group",
@@ -65,21 +74,25 @@
           "icon": "git-compare",
           "color": "#e5e7eb",
           "target": "shell",
-          "autoShowLog": true
+          "autoShowLog": true,
+          "id": "3250ca02-5b64-4518-a97c-2cd5b8b89280"
         },
         {
           "name": "git push",
           "prompt": "git push",
           "icon": "git-compare-arrows",
-          "target": "shell"
+          "target": "shell",
+          "id": "c4ba9da4-ce22-4cce-9114-af1f6f767a5a"
         }
-      ]
+      ],
+      "id": "07c5769c-55ae-4830-866b-c61632bc1766"
     },
     {
       "name": "Prep Major Release",
-      "prompt": "We've made a lot of changes.  Review and update the README.md file as necessary.  Make sure it stays compelling and advertises our most important and interesting features.\n\nReview the demo modes and revise those if you think new / different / fewer screenshots are needed.  Then re-capture all of the demos (always do all of them in case minor details changed).\n",
+      "prompt": "/prep-major-release",
       "icon": "wand",
-      "color": "#14b8a6"
+      "color": "#14b8a6",
+      "id": "c47a0d1f-7ea3-4676-b149-f8321ef15599"
     }
   ],
   "auto_context": [
