@@ -136,6 +136,29 @@ describe('swapIntoPlace', () => {
     expect(await exists(newDir)).toBe(true);
   });
 
+  it('refuses when a retained-old directory already exists, leaving both sides intact', async () => {
+    // Interleaved / repeated-swap: a prior swap (or a re-run with the same
+    // timestamp) already left `<canonical>.old-<ts>` behind. The swap must
+    // refuse rather than clobber it, and must not move the canonical aside.
+    await makeCluster(canonical, 'old');
+    const newDir = join(dir, 'pgdata.new');
+    await makeCluster(newDir, 'new');
+    const ts = '2026-06-16T12:00:00.000Z';
+    const staleOld = `${canonical}.old-2026-06-16T12-00-00.000Z`;
+    await makeCluster(staleOld, 'stale-old'); // a leftover retained-old cluster
+
+    await expect(swapIntoPlace(canonical, newDir, { timestamp: ts })).rejects.toThrow(
+      /Retained-old directory already exists/,
+    );
+
+    // The move-aside never fired: canonical still opens with its own data...
+    expect(await readMarker(canonical)).toBe('old');
+    // ...the pre-existing retained-old cluster was not touched...
+    expect(await readMarker(staleOld)).toBe('stale-old');
+    // ...and the staging dir is left untouched for a retry.
+    expect(await readMarker(newDir)).toBe('new');
+  });
+
   it('restores the canonical cluster and rethrows a non-EXDEV swap failure', async () => {
     await makeCluster(canonical, 'old');
     const newDir = join(dir, 'pgdata.new');
