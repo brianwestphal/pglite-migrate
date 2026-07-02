@@ -47,7 +47,26 @@ Make the changes you're confident about **directly in `scripts/demo.mjs`** (add/
 
 > Demo SVGs are the **verbatim** CLI transcript. Do **not** hand-edit the `.svg` files or invent output — they're regenerated from real runs. If you changed demo definitions or any CLI output, the existing SVGs are now stale and must be recaptured.
 
-### 4. Hand off
+### 4. Upgrade the demo/diagram renderer
+
+The demos (`npm run demo`) and the architecture diagram (`npm run diagram`) are both rendered by [`domotion-svg`](https://www.npmjs.com/package/domotion-svg) (a dev dependency). A major release is the right moment to pick up its latest fixes and rendering improvements — so **upgrade it to the latest before the maintainer recaptures**, otherwise they'll regenerate against a stale renderer.
+
+```bash
+npm ls domotion-svg            # currently installed version
+npm view domotion-svg version  # latest published version
+```
+
+If the installed version is behind the latest, upgrade to it and pin the new version in `package.json`:
+
+```bash
+npm install -D domotion-svg@latest
+```
+
+> `npm install` runs in the sandbox and typically needs `dangerouslyDisableSandbox` to reach the npm registry (it also pulls Chromium via Playwright) — expect a permission prompt.
+
+If domotion-svg is already current, note that and move on. Either way, **record the version transition** (e.g. `0.13.3 → 0.20.0`, or "already latest") in your hand-off so the recapture list makes clear whether the SVGs must be regenerated purely for a renderer bump. A renderer upgrade means **all** demos and the diagram are stale, independent of any demo-definition changes.
+
+### 5. Hand off
 
 Run the cheap gates on whatever you touched so you don't hand over a broken tree:
 
@@ -58,7 +77,8 @@ npm run typecheck && npm run lint
 Then report:
 - **README changes** — what you updated and why (bullet list).
 - **Demo changes** — which demos you added / revised / removed in `scripts/demo.mjs`, and the matching README img/alt edits.
-- **Recapture list** — the explicit set of demos (and/or the diagram) the maintainer must regenerate, with the commands: `npm run demo` (and `npm run diagram` if the architecture diagram changed). Note these need Chromium and are run by the user, not you.
+- **Renderer upgrade** — the `domotion-svg` version transition from step 4 (e.g. `0.13.3 → 0.20.0`, or "already latest"). Flag that a bump makes **every** SVG stale regardless of demo-definition changes.
+- **Recapture list** — the explicit set of demos (and/or the diagram) the maintainer must regenerate, with the commands: `npm run demo` (and `npm run diagram` if the architecture diagram changed). Note these need Chromium and are run by the user, not you. If `domotion-svg` was upgraded, this list is **everything** (all demos + the diagram).
 - **Open questions** — anything you weren't sure should be advertised, demoted, or demoed (raise as `FEEDBACK NEEDED` on the ticket if it blocks).
 
 Do **not** `git push`; commit only per the project's Git Workflow.
