@@ -7,6 +7,12 @@
  * their own orchestration.
  */
 export { backupDataDir, type BackupOptions } from './backup.js';
+export {
+  knownMajors,
+  PGLITE_PACKAGE,
+  resolveEngine,
+  UnknownMajorError,
+} from './engines/registry.js';
 export { introspectSchema } from './introspect.js';
 export { openDataDir, type OpenedCluster } from './loader.js';
 export { migrate, planMigration } from './migrate.js';
@@ -21,6 +27,7 @@ export {
 } from './transfer.js';
 export type {
   ColumnInfo,
+  EngineRelease,
   ForeignKey,
   MigrateOptions,
   MigrationReport,

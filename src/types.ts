@@ -29,6 +29,26 @@ export interface PGliteLike {
   exec(query: string): Promise<unknown>;
 }
 
+/**
+ * A pinned, known-good `@electric-sql/pglite` release for one Postgres major.
+ *
+ * Engine acquisition only ever needs the *source* side (the host application
+ * supplies the target it was built against), and old majors are frozen history —
+ * so a pinned table does not rot the way version allowlists usually do.
+ */
+export interface EngineRelease {
+  /** Postgres major this engine bundles, as stamped into the data dir's `PG_VERSION`. */
+  postgresMajor: number;
+  /** The `@electric-sql/pglite` version to acquire. */
+  version: string;
+  /**
+   * npm `dist.integrity` for that version's tarball (sha512, base64). Pinned
+   * in-package rather than read from the registry at fetch time, so a
+   * compromised or spoofed registry response cannot get code past us.
+   */
+  integrity: string;
+}
+
 /** A column of a user table, in physical order. */
 export interface ColumnInfo {
   name: string;
