@@ -45,8 +45,9 @@ For the no-host-app case (migrating a data directory with no application present
 - `src/introspect.ts` — `introspectSchema(db)`: tables, columns, foreign keys, sequences via system-catalog SQL. Version-agnostic (only stable catalog relations + `format_type`).
 - `src/transfer.ts` — `topologicalSort` (pure, FK insert ordering), `transferTable` (row copy), `applySequences` (`setval`).
 - `src/migrate.ts` — `migrate(options)`: the orchestrator; introspect source → sort → transfer → sequences → report.
-- `src/loader.ts` — `openDataDir(dir, modulePath)`: opens a data dir with a chosen PGlite package/alias (for the CLI and cross-major engine loading).
+- `src/loader.ts` — `openDataDir(dir, modulePath, options)`: opens a data dir with a chosen PGlite package/alias (for the CLI and cross-major engine loading). Resolve-first, with opt-in acquisition of a missing engine.
 - `src/version.ts` — `readClusterVersion(dataDir)`: reads the major version from the `PG_VERSION` file without booting the cluster.
+- `src/engines.ts` — second public entry point (`pglite-migrate/engines`), the **only** network surface; `src/engines/registry.ts` (pinned major → version + sha512), `src/engines/acquire.ts` (download/verify/extract/cache), `src/engines/tar.ts` (hand-rolled, zero-dep, security-hardened extractor).
 - `src/cli.ts` — the `pglite-migrate` bin (leading shebang; esbuild preserves it).
 - `src/ident.ts` — SQL identifier/literal quoting helpers.
 
@@ -68,11 +69,12 @@ All docs live in `docs/`. Requirements are numbered for linear reading (`docs/N-
 - `docs/12-dry-run.md` — detailed spec: read-only plan/report (FR-5.3)
 - `docs/13-post-migration-validation.md` — detailed spec: validation that gates the swap (FR-5.4)
 - `docs/14-idempotence.md` — detailed spec: re-run safety (FR-5.6)
+- `docs/15-engine-acquisition.md` — detailed spec: opt-in downloading of a missing engine (pinned registry, hash verification, keep/ephemeral caching)
 - `docs/ARCHITECTURE.md` — components and data flow
 - `docs/ai/code-summary.md` — codebase map + "where do I look to…" index
 - `docs/ai/requirements-summary.md` — synthesized requirements view with status markers
 
-Docs 7–14 are **detailed, design-only specs** for deferred capabilities; docs 1–6 remain the high-level overview. Keep both in sync when implementing.
+Docs 7–15 are **detailed, per-feature specs** (originally design-only for deferred capabilities; all are now implemented); docs 1–6 remain the high-level overview. Keep both in sync when implementing.
 
 **When making changes, keep docs in sync** — update the relevant requirements doc and both AI summaries in the same pass.
 
@@ -149,6 +151,7 @@ Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what 
 - **Safety layer** — source backup (`docs/10`), `swapIntoPlace` atomic-swap primitive (`docs/11`), `--dry-run` (`docs/12`), post-migration validation (`docs/13`), and `onExisting` re-run safety (`docs/14`).
 - **generated/identity column introspection**, and the **public-schema FK qualification fix** (ordering/cycles were silently broken before).
 - **True cross-major run (PGLM-19)** — the aliases now resolve to two real majors (`pglite-old` = PG17 via 0.4.3, `pglite-new` = PG18 via 0.5.3). The whole e2e suite is a genuine PG17 → PG18 migration, and `tests/e2e/cross-major.test.ts` asserts on disk that a PG18 engine refuses a PG17 data dir (the motivating failure, PGLM-9). Verified against a real PGlite 0.4 (PG17) data directory.
+- **Engine acquisition (PGLM-62…67)** — opt-in downloading of the engine a data directory needs, so a host that bundles only the destination version can still migrate (`docs/15`). Pinned major → version + sha512 registry (every entry verified by download → hash → boot → `server_version`), verify-before-write, `keep` (default) / `ephemeral` caching, `--fetch-missing-engine`. Resolve-first: an installed engine always wins. Hand-rolled tar extractor keeps the **zero runtime dependencies** property; it is byte-identical to `tar -xzf` on a real tarball. `tests/e2e/acquired-engine.test.ts` is the only network-dependent suite and self-gates offline.
 
 ### Remaining follow-up work (file as tickets)
 

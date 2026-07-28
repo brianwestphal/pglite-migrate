@@ -373,3 +373,26 @@ describe('defaultCacheDir', () => {
     expect(dir).toContain(join('.cache', 'pglite-migrate', 'engines'));
   });
 });
+
+describe('opt-in isolation of the network surface', () => {
+  it('importing the main entry makes no network call and does not export acquireEngine', async () => {
+    let fetchCalls = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+      fetchCalls++;
+      return realFetch(...args);
+    });
+    try {
+      const entry: Record<string, unknown> = await import('../../src/index.js');
+      expect(fetchCalls).toBe(0);
+      // Acquisition is reachable only via `pglite-migrate/engines`, so that a
+      // consumer who never opts in has no route to the network code.
+      expect('acquireEngine' in entry).toBe(false);
+      expect('acquireRelease' in entry).toBe(false);
+      // The pinned registry is pure data and IS safe to expose here.
+      expect('resolveEngine' in entry).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

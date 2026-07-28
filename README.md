@@ -19,6 +19,7 @@ A PG18 PGlite engine **physically cannot open** a PG17 data directory — that's
 - **Fidelity-first transfer.** Rows move via PostgreSQL **`COPY` (text format)** with a per-table `INSERT` fallback, preserving `json`/`jsonb`, `numeric`, `bytea`, arrays and `timestamptz` exactly. Sequences are realigned with `setval` so the next inserted id is correct.
 - **Handles the hard cases.** Foreign keys are topologically ordered so parents load before children, and **FK cycles** transfer correctly inside a deferred-constraint transaction.
 - **Safe by construction.** Optional source **backup**, a **dry-run** that provably writes nothing, post-migration **validation** (row-count parity, sequence consistency, or full content digests), **idempotent re-runs** (`error` / `truncate` / `skip`), and an atomic write-new-then-rename **swap** primitive.
+- **Bring only the new engine.** Opt in and pglite-migrate will **fetch the old engine** your data directory needs — pinned version, hash-verified against a checksum shipped in this package, cached between runs. No second alias to wire up.
 
 ## Install
 
@@ -29,9 +30,23 @@ npm install pglite-migrate @electric-sql/pglite
 `@electric-sql/pglite` is a peer dependency — your app supplies the engine version(s). To open two majors at once, install both under npm aliases:
 
 ```bash
-npm install pglite-old@npm:@electric-sql/pglite@0.4.3   # PG17
-npm install pglite-new@npm:@electric-sql/pglite@0.5.3   # PG18
+npm install pglite-old@npm:@electric-sql/pglite@0.4.6   # PG17
+npm install pglite-new@npm:@electric-sql/pglite@0.5.4   # PG18
 ```
+
+**Or let pglite-migrate fetch the old engine for you.** Typically your app bundles only the version it was built against — the *destination*. Which engine the *source* needs isn't a property of your app at all; it's a property of the data on the user's disk. So pglite-migrate can read the data directory's `PG_VERSION`, download the pinned engine for that major, verify it against a hash shipped in this package, and use it:
+
+```ts
+const source = await openDataDir('/path/to/old-data', 'pglite-old', {
+  fetchMissingEngine: true,   // off by default
+});
+```
+
+```bash
+pglite-migrate ./old-data ./new-data --source-engine pglite-old --fetch-missing-engine
+```
+
+It's opt-in, an installed engine always wins, and the engine is cached for later runs (`--engine-cache ephemeral` to clean up instead). See [engine acquisition](docs/15-engine-acquisition.md).
 
 ## Quick start (library, app-driven)
 

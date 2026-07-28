@@ -25,6 +25,8 @@
 
 `@electric-sql/pglite` is therefore a **peer dependency**, never bundled (`tsup.config.ts` marks it external). The CLI constructs engines via `openDataDir` (`src/loader.ts`), which dynamically imports a chosen module/alias.
 
+When a chosen engine does not resolve, `openDataDir` can **acquire** it instead of failing: read the data directory's major, look it up in a pinned registry, download and hash-verify the tarball, extract it, and import the result (`src/engines/`, spec in [`15-engine-acquisition.md`](15-engine-acquisition.md)). This is opt-in and resolve-first, and lives behind a separate `pglite-migrate/engines` entry point. The loader reaches it through a dynamic `import()` only when a caller opts in, so importing `pglite-migrate` makes no network call and never evaluates the acquisition module.
+
 ## Data flow
 
 1. Host app (or CLI) opens the **source** with the old engine and the **target** with the new engine. In the app-driven path the host creates the target schema first (the app-driven contract); the standalone path instead rebuilds the app-class schema with `reconstructSchema` (`src/reconstruct.ts`, opt-in via `migrate({ reconstructSchema: true })` / CLI `--reconstruct-schema`).

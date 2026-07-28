@@ -21,8 +21,13 @@ src/
   backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
   reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); onUnsupported 'error' throws before any DDL
-  loader.ts       openDataDir(dir, modulePath): open a data dir with a chosen PGlite package/alias
+  loader.ts       openDataDir(dir, modulePath, options): open a data dir with a chosen PGlite package/alias; resolve-first, then optional acquisition; absolute paths go through pathToFileURL
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster
+  engines.ts      Second public entry point (`pglite-migrate/engines`) — the opt-in acquisition API; the ONLY network surface
+  engines/
+    registry.ts   Pinned Postgres-major → PGlite version + sha512 table; resolveEngine / knownMajors / UnknownMajorError
+    acquire.ts    acquireEngine(major) / acquireRelease(release): download → verify pinned hash → extract → resolveEntry; cache 'keep' (default) | 'ephemeral'
+    tar.ts        extractTarGz: hand-rolled, zero-dep, security-hardened (refuses links/devices/traversal/bad checksums; ignores archive modes)
   cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run
 tests/
   topo / version / ident / catalog .test.ts   Pure unit tests (catalog: tableKey/systemSchemaFilter/regclassLiteral + countRows)
@@ -32,13 +37,18 @@ tests/
   validate.test.ts                       counts / full-digest / sequence checks
   backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked)
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
-  loader.test.ts / cli.test.ts           openDataDir; parseArgs + run() over real temp dirs
+  loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle); parseArgs + run() over real temp dirs
+  engines/registry.test.ts               Pinned table: lookup, unknown major, one-release-per-major, `15devel` parse
+  engines/tar.test.ts                    Extractor + hostile archives (traversal, links, devices, bad checksum, pax/GNU overrides)
+  engines/acquire.test.ts                Acquisition against a local HTTP server: integrity, cache hit/miss, both retention modes, races, mode transitions
+  engines/fixtures.ts                    Synthetic tar/tgz builder (incl. hostile entries) + a stand-in engine package
   diagram-svg.test.ts                    Layout guard: parses assets/diagram.svg, asserts the README diagram's flow labels don't crowd/overlap (PGLM-36)
   demo-caret.test.ts                     Caret-tracking guard: parses assets/demos/*.svg, asserts the typing caret and text-reveal share a constant-speed (linear) timing so the caret can't lag the typed text (PGLM-37 / DM-1204)
   demo-loop.test.ts                      Loop-boundary guard: parses assets/demos/*.svg, asserts the output is revealed then hidden and never outlives the typed command at the loop cut (PGLM-46)
   helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
   e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
-docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
+  e2e/acquired-engine.test.ts            Migration whose SOURCE engine is downloaded, not installed. The only network-dependent suite — self-gates and ctx.skip()s offline
+docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 ```
 
 ## Public API (`src/index.ts`)
@@ -48,8 +58,10 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 - `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target, options?)`
 - `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
 - `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
-- `openDataDir(dir, modulePath?)`, `readClusterVersion(dataDir)`
-- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onValidationFailure`/`onExisting`/`dryRun`/`reconstructSchema`/`onUnsupported`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`OnValidationFailure`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `OnUnsupported`/`ReconstructOptions`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`; value export `ValidationError`
+- `openDataDir(dir, modulePath?, options?)`, `readClusterVersion(dataDir)`
+- `resolveEngine(major)`, `knownMajors()`, `PGLITE_PACKAGE`, `UnknownMajorError` — the pinned registry (pure data, no network)
+- **`pglite-migrate/engines`** (second entry point, the only network surface): `acquireEngine(major, opts?)`, `acquireRelease(release, opts?)`, `defaultCacheDir()`, `resolveEntry(dir)`, `extractTarGz`, `safeEntryPath`, `EngineFetchError`, `IntegrityError`, `TarError`
+- Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onValidationFailure`/`onExisting`/`dryRun`/`reconstructSchema`/`onUnsupported`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`OnValidationFailure`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `OnUnsupported`/`ReconstructOptions`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`, `OpenOptions`, `EngineCacheMode`, `EngineRelease`; value export `ValidationError`
 
 ## Key design points
 
@@ -58,6 +70,7 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 - Catalog queries are version-agnostic (stable relations + `format_type`). FK edges are schema-qualified (`nspname || '.' || relname`, not `regclass::text`) so they match the qualified table keys used in `topologicalSort` (PGLM-20 fix).
 - Data transfer is **COPY-text first** (`COPY … TO/FROM '/dev/blob'`, preserves `json`/etc.) with a per-table **row-by-row INSERT fallback**; generated-stored columns are excluded.
 - `migrate` runs validation by default (`counts`), refuses a populated target by default (`onExisting: 'error'`), and never mutates the source.
+- **Engine acquisition is opt-in and resolve-first.** An installed engine always wins; a download is considered only when the specifier does not resolve *and* the failure names it (so a module that breaks on its own imports surfaces its own error). Hashes are pinned in-package, not read from the registry, so a spoofed response cannot get code past verification. Network code is reached only through a dynamic `import()` on the opt-in path: importing `pglite-migrate` makes no network call, does not evaluate the acquisition module, and does not export `acquireEngine`. (The build uses `splitting: false`, so the bytes are inlined into `dist/index.js` but wrapped in esbuild's lazy `__esm` initializer — non-evaluation, not byte-level absence.) Package still has **zero runtime dependencies**, which is why the tar extractor is hand-rolled.
 
 ## Where do I look to…
 
@@ -72,6 +85,8 @@ docs/                 Requirements (1–14), ARCHITECTURE.md, ai/ summaries
 - **…change backup / atomic swap** → `src/backup.ts` / `src/swap.ts`
 - **…add a CLI flag** → `src/cli.ts`
 - **…open an engine version / alias** → `src/loader.ts`; **…detect major version** → `src/version.ts`
+- **…pin a new Postgres major's engine** → `src/engines/registry.ts` (verify empirically first — download, hash, boot, read `server_version`)
+- **…change downloading / caching an engine** → `src/engines/acquire.ts`; **…change archive-extraction safety** → `src/engines/tar.ts`
 - **…add/adjust types** → `src/types.ts`
 - **…change the e2e version matrix** → `pglite-old` (0.4.x/PG17) / `pglite-new` (0.5.x/PG18) aliases in `package.json` (PGlite minor line ↔ PG major: 0.2→16, 0.3/0.4→17, 0.5→18)
 

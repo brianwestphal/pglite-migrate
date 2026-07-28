@@ -4,8 +4,9 @@
  *
  * This is published as a separate entry point (`pglite-migrate/engines`) because
  * it is the only part of the package that reaches the network. Importing
- * `pglite-migrate` itself never pulls this in, and nothing here runs unless a
- * caller explicitly asks for it.
+ * `pglite-migrate` itself makes no network call, does not evaluate this module,
+ * and does not re-export {@link acquireEngine} — the loader reaches it through a
+ * dynamic import only when a caller opts in.
  *
  * @packageDocumentation
  */

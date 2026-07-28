@@ -19,7 +19,8 @@ The library's defining design choice: the core speaks only to a minimal structur
 - **FR-1.3** Be reusable across multiple host projects (a published npm package: library + CLI).
 - **FR-1.4** Detect whether a migration is even needed by reading the cluster major version without booting it.
 - **NFR-1.5** Be version-agnostic in its catalog queries — rely only on stable catalog relations and `format_type`, so the same code works across majors.
-- **NFR-1.6** Keep the dependency surface minimal; `@electric-sql/pglite` is a peer dependency, not a hard one.
+- **NFR-1.6** Keep the dependency surface minimal; `@electric-sql/pglite` is a peer dependency, not a hard one. The package has **zero runtime dependencies**, a property worth preserving (it is why the archive extractor in [`15-engine-acquisition.md`](15-engine-acquisition.md) is hand-rolled).
+- **FR-1.7** Not require the host to install an engine for a major it never shipped against. A host bundles the *destination* engine; which *source* engine a data directory needs is a property of the data, not the app, so the library can read `PG_VERSION` and acquire the matching engine on request — opt-in only. See [`15-engine-acquisition.md`](15-engine-acquisition.md).
 
 ## Non-goals (v1)
 

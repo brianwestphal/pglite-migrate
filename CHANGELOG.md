@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Added
+
+- **Engine acquisition.** `pglite-migrate` can now fetch the old PGlite engine a
+  data directory needs, instead of requiring every consumer to install one under
+  an npm alias. An application typically bundles only the engine it was built
+  against — the destination — while the *source* version is a property of the
+  data on disk. Opt in with `openDataDir(dir, engine, { fetchMissingEngine: true })`
+  or `--fetch-missing-engine`.
+  - Engines are pinned per Postgres major (PG15–PG18) and verified against a
+    sha512 shipped in this package, so a spoofed registry response cannot get
+    code past verification.
+  - Retention is the caller's choice: `keep` (default) caches the engine for
+    later runs, `ephemeral` removes it when the cluster closes.
+  - Resolution always comes first — an installed engine wins and nothing is
+    downloaded. Off unless explicitly requested.
+  - New `pglite-migrate/engines` entry point exposes the acquisition API.
+    Importing `pglite-migrate` makes no network call and does not evaluate the
+    acquisition module.
+  - The package still has **zero runtime dependencies**.
+
+### Changed
+
+- A missing engine now reports the detected major, the exact install command,
+  and the opt-in flag instead of a bare `ERR_MODULE_NOT_FOUND`.
+
+### Fixed
+
+- `openDataDir` now imports absolute engine paths via `pathToFileURL`, which
+  previously would have failed on Windows.
+
+---
+
 - Initial development release. The app-driven, data-only migration path
   (introspect → topological sort → COPY-text transfer → sequence realignment)
   runs end to end across a real PG17 → PG18 pair, alongside standalone schema

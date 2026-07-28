@@ -25,7 +25,8 @@ The no-host-app DDL path. `reconstructSchema(source, target, { onUnsupported })`
 
 - FR-4.1–4.6 arg parsing, version reporting, progress, errors — **Shipped**
 - NG-4.7 target-schema-must-exist — **lifted** by `--reconstruct-schema`
-- NG-4.8 two-engine cross-major wiring — **Shipped/verified**, including the genuine cross-major refusal: the aliases now resolve to PG17 (0.4.3) / PG18 (0.5.3) and `tests/e2e/cross-major.test.ts` asserts a PG18 engine refuses a PG17 dir (PGLM-19, PGLM-9)
+- FR-4.2a engine-acquisition flags — **Shipped** (`--fetch-missing-engine`, `--engine-cache`, `--engine-cache-dir`; PGLM-65, doc 15)
+- NG-4.8 two-engine cross-major wiring — **Shipped/verified**, including the genuine cross-major refusal: the aliases now resolve to PG17 (0.4.3) / PG18 (0.5.3) and `tests/e2e/cross-major.test.ts` asserts a PG18 engine refuses a PG17 dir (PGLM-19, PGLM-9). Installing both engines is **no longer the only option** — acquisition can supply the missing side (doc 15)
 - NG-4.9 dry-run/backup/validate flags — **Shipped** (`--dry-run`, `--backup`/`--backup-dir`, `--validate`, `--on-existing`)
 
 ## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Shipped
@@ -34,7 +35,20 @@ Backup (FR-5.1), atomic swap (FR-5.2, library primitive), dry-run (FR-5.3), post
 
 ## 6 — Testing (`docs/6-testing.md`) — Shipped
 
-Unit (pure + in-memory) and two-version e2e (roundtrip, fidelity, fk-cycle, standalone, **cross-major**) via npm aliases. The aliases resolve to two real majors — `pglite-old` = PG17 (0.4.3), `pglite-new` = PG18 (0.5.3) — so the whole e2e suite is a **genuine cross-major run**, and `cross-major.test.ts` proves on disk that a PG18 engine refuses a PG17 data dir (PGLM-19, done). A future PG19 needs only a `pglite-new` bump.
+Unit (pure + in-memory) and two-version e2e (roundtrip, fidelity, fk-cycle, standalone, **cross-major**, **acquired-engine**) via npm aliases. The aliases resolve to two real majors — `pglite-old` = PG17 (0.4.3), `pglite-new` = PG18 (0.5.3) — so the whole e2e suite is a **genuine cross-major run**, and `cross-major.test.ts` proves on disk that a PG18 engine refuses a PG17 data dir (PGLM-19, done). A future PG19 needs only a `pglite-new` bump. NFR-6.4: `acquired-engine.test.ts` is the **only network-dependent suite**; it self-gates on registry reachability and `ctx.skip()`s offline so a disconnected `test:e2e` stays green and reports skips honestly (PGLM-67).
+
+## 15 — Engine Acquisition (`docs/15-engine-acquisition.md`) — Shipped
+
+Opt-in downloading of a missing engine, so a host that bundles only the destination version can still migrate (PGLM-62…67).
+
+- FR-15.1–15.5 pinned major → version + sha512 registry — **Shipped**. Every entry verified empirically (download → hash → extract → boot → read `server_version`): PG15→0.1.5, PG16→0.2.17, PG17→0.4.6, PG18→0.5.4. Pinning doesn't rot because only source-side majors are fetched and old majors are frozen.
+- FR-15.6–15.10 acquire, verify-before-write, actionable offline error, atomic staging for concurrent runs — **Shipped**
+- FR-15.11–15.15 retention: `keep` (**default**) / `ephemeral`, `cacheDir` override, release tied to `close()` — **Shipped**
+- NFR-15.16–15.19 opt-in only, resolve-first, separate `pglite-migrate/engines` entry point + dynamic import, actionable missing-engine error — **Shipped**
+- NFR-15.20–15.24 hand-rolled zero-dep extractor; refuses links/devices/traversal/bad checksums/base-256; checks apply to pax + GNU long-name overrides; archive modes ignored; byte-identical to `tar -xzf` on a real tarball — **Shipped**
+- FR-15.25–15.27 CLI flags, either side may acquire, acquisition reported to stderr — **Shipped**
+
+Known limitations recorded in the doc: offline/air-gapped/proxied runs gain a new failure mode (mitigated by opt-in default); packaged apps must point `cacheDir` somewhere writable; only pinned majors can be acquired.
 
 ## 7–14 — Detailed feature specs — Implemented
 
@@ -55,6 +69,7 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 2. Upsert/`ON CONFLICT` re-run strategy — deferred (needs PK/unique introspection; doc 14).
 3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path — follow-ups in docs 10/11.
 4. Open product decisions flagged in docs 7–14 (e.g. backup default-on, identity-vs-serial normalization).
+5. Engine/cluster major precheck — the CLI reads both `PG_VERSION`s but never verifies the *named* engine actually bundles that major (PGLM-68, doc 15 context).
 
 ## Maintenance triggers
 
