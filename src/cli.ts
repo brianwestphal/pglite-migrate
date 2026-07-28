@@ -2,9 +2,15 @@
 import { pathToFileURL } from 'node:url';
 
 import { backupDataDir, type BackupOptions } from './backup.js';
-import { openDataDir, type OpenedCluster } from './loader.js';
+import { openDataDir, type OpenedCluster, type OpenOptions } from './loader.js';
 import { migrate } from './migrate.js';
-import type { OnExisting, OnUnsupported, OnValidationFailure, ValidationLevel } from './types.js';
+import type {
+  EngineCacheMode,
+  OnExisting,
+  OnUnsupported,
+  OnValidationFailure,
+  ValidationLevel,
+} from './types.js';
 import { readClusterVersion } from './version.js';
 
 const USAGE = `pglite-migrate — migrate PGlite data across PostgreSQL major versions
@@ -19,6 +25,9 @@ Arguments:
 Options:
   --source-engine <pkg>   npm module/alias for the source engine (default: @electric-sql/pglite)
   --target-engine <pkg>   npm module/alias for the target engine (default: @electric-sql/pglite)
+  --fetch-missing-engine  Download a pinned engine when the named one is not installed.
+  --engine-cache <mode>   Retention for a downloaded engine: keep | ephemeral (default: keep)
+  --engine-cache-dir <p>  Where to store downloaded engines (default: an OS cache directory).
   --validate <level>      Post-migration validation: off | counts | full (default: counts)
   --strict                On validation failure, throw a ValidationError (default: report + exit non-zero)
   --on-existing <mode>    Non-empty target: error | truncate | skip (default: error)
@@ -33,7 +42,11 @@ Options:
 Note: by default the target schema must already exist (created by the host
 application); pass --reconstruct-schema to rebuild it from the source for a
 standalone (no-host-app) migration. Out-of-scope objects (views, triggers,
-functions, RLS, partitioning) are reported, not recreated.`;
+functions, RLS, partitioning) are reported, not recreated.
+
+Engines are resolved from node_modules first; --fetch-missing-engine only
+applies when a named engine does not resolve at all. It downloads and then runs
+code from the npm registry, so it is off unless you ask for it.`;
 
 interface CliArgs {
   source: string;
@@ -49,6 +62,9 @@ interface CliArgs {
   keep?: number;
   reconstructSchema: boolean;
   onUnsupported: OnUnsupported;
+  fetchMissingEngine: boolean;
+  engineCache: EngineCacheMode;
+  engineCacheDir?: string;
 }
 
 function parseValidationLevel(value: string): ValidationLevel {
@@ -64,6 +80,11 @@ function parseOnExisting(value: string): OnExisting {
 function parseOnUnsupported(value: string): OnUnsupported {
   if (value === 'warn' || value === 'error') return value;
   throw new Error(`Invalid --on-unsupported mode: ${value} (expected warn or error)`);
+}
+
+function parseEngineCache(value: string): EngineCacheMode {
+  if (value === 'keep' || value === 'ephemeral') return value;
+  throw new Error(`Invalid --engine-cache mode: ${value} (expected keep or ephemeral)`);
 }
 
 function parseKeep(value: string): number {
@@ -91,6 +112,9 @@ export function parseArgs(argv: string[]): CliArgs | null {
   let keep: number | undefined;
   let reconstructSchema = false;
   let onUnsupported: OnUnsupported = 'warn';
+  let fetchMissingEngine = false;
+  let engineCache: EngineCacheMode = 'keep';
+  let engineCacheDir: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -119,6 +143,12 @@ export function parseArgs(argv: string[]): CliArgs | null {
       reconstructSchema = true;
     } else if (arg === '--on-unsupported') {
       onUnsupported = parseOnUnsupported(argv[++i] ?? '');
+    } else if (arg === '--fetch-missing-engine') {
+      fetchMissingEngine = true;
+    } else if (arg === '--engine-cache') {
+      engineCache = parseEngineCache(argv[++i] ?? '');
+    } else if (arg === '--engine-cache-dir') {
+      engineCacheDir = argv[++i] ?? '';
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown option: ${arg}`);
     } else {
@@ -141,6 +171,9 @@ export function parseArgs(argv: string[]): CliArgs | null {
     keep,
     reconstructSchema,
     onUnsupported,
+    fetchMissingEngine,
+    engineCache,
+    engineCacheDir,
   };
 }
 
@@ -158,6 +191,30 @@ const defaultIO: CliIO = {
     console.error(m);
   },
 };
+
+/**
+ * Build the engine-loading options for one side of the migration.
+ *
+ * The already-read `PG_VERSION` is passed through as `major` so acquisition
+ * still works for a target directory that does not exist yet.
+ */
+function openOptions(args: CliArgs, major: number | null): OpenOptions {
+  const options: OpenOptions = { fetchMissingEngine: args.fetchMissingEngine };
+  if (args.fetchMissingEngine) {
+    options.cache = args.engineCache;
+    if (args.engineCacheDir !== undefined) options.cacheDir = args.engineCacheDir;
+    if (major !== null) options.major = major;
+  }
+  return options;
+}
+
+/** Report an engine that had to be downloaded, the way a backup is reported. */
+function reportAcquired(io: CliIO, side: string, cluster: OpenedCluster): void {
+  const acquired = cluster.acquired;
+  if (acquired === undefined) return;
+  const origin = acquired.fromCache ? 'from cache' : 'downloaded';
+  io.err(`Acquired ${side} engine @electric-sql/pglite@${acquired.version} (${origin})`);
+}
 
 /**
  * Execute the CLI for the given argv and return a process exit code (0 on
@@ -193,8 +250,10 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
       const path = await backupDataDir(args.source, backupOptions);
       io.err(`Backed up source to ${path}`);
     }
-    source = await openDataDir(args.source, args.sourceEngine);
-    target = await openDataDir(args.target, args.targetEngine);
+    source = await openDataDir(args.source, args.sourceEngine, openOptions(args, sourceVersion));
+    reportAcquired(io, 'source', source);
+    target = await openDataDir(args.target, args.targetEngine, openOptions(args, targetVersion));
+    reportAcquired(io, 'target', target);
     if (args.dryRun) io.err('DRY RUN — no changes will be written to the target.');
     const report = await migrate({
       source,

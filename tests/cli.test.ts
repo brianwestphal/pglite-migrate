@@ -22,8 +22,13 @@ describe('parseArgs', () => {
       onValidationFailure: 'report',
       dryRun: false,
       backup: false,
+      backupDir: undefined,
+      keep: undefined,
       reconstructSchema: false,
       onUnsupported: 'warn',
+      fetchMissingEngine: false,
+      engineCache: 'keep',
+      engineCacheDir: undefined,
     });
   });
 
@@ -106,6 +111,42 @@ describe('parseArgs', () => {
       reconstructSchema: true,
     });
     expect(parseArgs(['src', 'dst', '--standalone'])).toMatchObject({ reconstructSchema: true });
+  });
+
+  it('leaves engine acquisition off unless asked', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ fetchMissingEngine: false });
+    expect(parseArgs(['src', 'dst', '--fetch-missing-engine'])).toMatchObject({
+      fetchMissingEngine: true,
+    });
+  });
+
+  it('defaults --engine-cache to keep and rejects invalid modes', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ engineCache: 'keep' });
+    expect(parseArgs(['src', 'dst', '--engine-cache', 'ephemeral'])).toMatchObject({
+      engineCache: 'ephemeral',
+    });
+    expect(parseArgs(['src', 'dst', '--engine-cache', 'keep'])).toMatchObject({
+      engineCache: 'keep',
+    });
+    expect(() => parseArgs(['src', 'dst', '--engine-cache', 'bogus'])).toThrow(
+      /Invalid --engine-cache mode: bogus \(expected keep or ephemeral\)/,
+    );
+  });
+
+  it('parses --engine-cache-dir', () => {
+    expect(parseArgs(['src', 'dst'])).toMatchObject({ engineCacheDir: undefined });
+    expect(parseArgs(['src', 'dst', '--engine-cache-dir', '/tmp/engines'])).toMatchObject({
+      engineCacheDir: '/tmp/engines',
+    });
+  });
+
+  it('documents the engine flags in the usage text', async () => {
+    const usage: string[] = [];
+    await run(['--help'], { out: (m) => usage.push(m), err: () => undefined });
+    const text = usage.join('\n');
+    expect(text).toContain('--fetch-missing-engine');
+    expect(text).toContain('--engine-cache <mode>');
+    expect(text).toContain('--engine-cache-dir');
   });
 });
 
@@ -212,5 +253,23 @@ describe('run', () => {
 
     expect(code).toBe(0);
     expect(err.join('\n')).toContain('Done: 4 rows across 2 tables, 2 sequences aligned.');
+  }, 30_000);
+
+  it('fails with actionable guidance when an engine is missing and fetching is off', async () => {
+    const source = await seedDirWith(PGliteOld, 'source', SCHEMA_SQL, SEED_SQL);
+    const target = await seedDirWith(PGliteNew, 'target', SCHEMA_SQL);
+
+    const code = await run([source, target, '--source-engine', 'pglite-not-installed'], io);
+    const errText = err.join('\n');
+
+    expect(code).toBe(1);
+    // Not a bare ERR_MODULE_NOT_FOUND: it must name the major, the install
+    // command, and the opt-in flag.
+    expect(errText).toContain('pglite-not-installed');
+    expect(errText).toContain('PostgreSQL 17');
+    expect(errText).toContain('npm install pglite-not-installed@npm:@electric-sql/pglite@0.4.6');
+    expect(errText).toContain('--fetch-missing-engine');
+    // Nothing was downloaded, because acquisition was never opted into.
+    expect(errText).not.toContain('Acquired');
   }, 30_000);
 });
