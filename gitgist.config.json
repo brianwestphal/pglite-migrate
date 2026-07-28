@@ -1,0 +1,6 @@
+{
+  "exclude": [
+    "assets/demos/*",
+    "assets/diagram.svg"
+  ]
+}

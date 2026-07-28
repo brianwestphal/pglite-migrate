@@ -100,6 +100,7 @@ docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 - Unit: `npm run test` · E2E: `npm run test:e2e` · Both: `npm run test:all`
 - Lint: `npm run lint` · Types: `npm run typecheck`
 - Release-adjacent: `npm run commit-message` (gitgist) · `npm run changelog-analysis -- --next <ver>` (diff analysis feeding the `technical-changelog` skill; prints only, writes nothing)
+- `gitgist.config.json` — repo-level gitgist config. Excludes the generated SVGs (`assets/demos/*`, `assets/diagram.svg`) from the diff *body* fed to the model; they were 52% of the release-notes budget. The files still appear in the changed-file list and diffstat, so "demos regenerated" is still reportable. Bypass with `--no-config`.
 
 ## Maintenance triggers
 
