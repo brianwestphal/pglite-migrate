@@ -33,6 +33,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./engines": {
+      "types": "./dist/engines.d.ts",
+      "import": "./dist/engines.js"
     }
   },
   "files": [

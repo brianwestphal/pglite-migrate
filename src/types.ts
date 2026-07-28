@@ -30,6 +30,16 @@ export interface PGliteLike {
 }
 
 /**
+ * What an acquired engine leaves behind on disk:
+ * - `keep` — extract into a shared cache directory and reuse it on later runs
+ *   (default). A retried migration must not re-download the engine.
+ * - `ephemeral` — extract into a fresh temporary directory and remove it when
+ *   the run finishes, successfully or not. Never reads or writes the shared
+ *   cache, so it always downloads; that is the trade the caller opted into.
+ */
+export type EngineCacheMode = 'keep' | 'ephemeral';
+
+/**
  * A pinned, known-good `@electric-sql/pglite` release for one Postgres major.
  *
  * Engine acquisition only ever needs the *source* side (the host application
