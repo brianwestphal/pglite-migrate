@@ -46,7 +46,8 @@ For the no-host-app case (migrating a data directory with no application present
 - `src/transfer.ts` — `topologicalSort` (pure, FK insert ordering), `transferTable` (row copy), `applySequences` (`setval`).
 - `src/migrate.ts` — `migrate(options)`: the orchestrator; introspect source → sort → transfer → sequences → report.
 - `src/loader.ts` — `openDataDir(dir, modulePath, options)`: opens a data dir with a chosen PGlite package/alias (for the CLI and cross-major engine loading). Resolve-first, with opt-in acquisition of a missing engine.
-- `src/version.ts` — `readClusterVersion(dataDir)`: reads the major version from the `PG_VERSION` file without booting the cluster.
+- `src/version.ts` — `readClusterVersion(dataDir)`: reads the major version from the `PG_VERSION` file without booting the cluster. `readEngineMajor(db)`: asks a running engine which major it *is*.
+- `src/precheck.ts` — `assertEngineMatchesDataDir(db, options)`: fails early (with `EngineMismatchError`) when an engine cannot serve the data directory it was opened on. Must be given the **pre-open** `PG_VERSION` — a fresh directory is initialized at the engine's own major, so a post-open comparison is vacuous.
 - `src/engines.ts` — second public entry point (`pglite-migrate/engines`), the **only** network surface; `src/engines/registry.ts` (pinned major → version + sha512), `src/engines/acquire.ts` (download/verify/extract/cache), `src/engines/tar.ts` (hand-rolled, zero-dep, security-hardened extractor).
 - `src/cli.ts` — the `pglite-migrate` bin (leading shebang; esbuild preserves it).
 - `src/ident.ts` — SQL identifier/literal quoting helpers.

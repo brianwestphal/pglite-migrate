@@ -13,6 +13,8 @@ This mirrors the `pg_dump --schema-only` / `terraform plan` ergonomic: a read-on
 ## Requirements
 
 - **FR-12.1 Read-only preview** Dry-run introspects the **source** and reports what *would* be transferred without executing any `INSERT`, `setval`, or DDL against the **target**. The target data directory must be **byte-for-byte unchanged** after a dry-run.
+
+  > This constrains more than the write statements. PGlite initializes lazily, so *any* query against the target boots the cluster — itself a write. That is why the CLI's engine/data-directory precheck ([`4-cli.md`](4-cli.md) FR-4.7) checks the source but **skips the target under `--dry-run`**: reading the target's `server_version` to compare majors would be enough to violate this requirement. Anything added to the dry-run path must clear the same bar.
 - **FR-12.2 Report shape parity** The dry-run result reuses the real run's `MigrationReport` shape (`src/types.ts`) so the preview and the eventual real report are directly comparable. `tables` lists the tables in FK-safe insert order; `totalRows` is the sum of planned per-table row counts; `warnings` carries the same messages a real run would (notably the FK-cycle warning); `sequencesSet` reports how many sequences *would* be realigned.
 - **FR-12.3 Per-table row counts** For each table, the plan reports the number of rows that would be copied (`TableResult.rowsCopied`), computed cheaply via `SELECT count(*)` rather than by selecting or copying rows (FR-12.7).
 - **FR-12.4 FK-safe ordering** The planned table order is the same `topologicalSort` order a real run uses, so the operator sees the genuine insert sequence (parents before children).

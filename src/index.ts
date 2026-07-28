@@ -16,6 +16,11 @@ export {
 export { introspectSchema } from './introspect.js';
 export { openDataDir, type OpenedCluster, type OpenOptions } from './loader.js';
 export { migrate, planMigration } from './migrate.js';
+export {
+  assertEngineMatchesDataDir,
+  type EngineCheckOptions,
+  EngineMismatchError,
+} from './precheck.js';
 export { reconstructSchema } from './reconstruct.js';
 export { swapIntoPlace, type SwapOptions, type SwapResult } from './swap.js';
 export {
@@ -51,4 +56,4 @@ export type {
   ValidationReport,
 } from './types.js';
 export { validateMigration, ValidationError } from './validate.js';
-export { readClusterVersion } from './version.js';
+export { readClusterVersion, readEngineMajor } from './version.js';

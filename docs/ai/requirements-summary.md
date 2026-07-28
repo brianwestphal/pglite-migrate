@@ -27,6 +27,7 @@ The no-host-app DDL path. `reconstructSchema(source, target, { onUnsupported })`
 - NG-4.7 target-schema-must-exist — **lifted** by `--reconstruct-schema`
 - FR-4.2a engine-acquisition flags — **Shipped** (`--fetch-missing-engine`, `--engine-cache`, `--engine-cache-dir`; PGLM-65, doc 15)
 - NG-4.8 two-engine cross-major wiring — **Shipped/verified**, including the genuine cross-major refusal: the aliases now resolve to PG17 (0.4.3) / PG18 (0.5.3) and `tests/e2e/cross-major.test.ts` asserts a PG18 engine refuses a PG17 dir (PGLM-19, PGLM-9). Installing both engines is **no longer the only option** — acquisition can supply the missing side (doc 15)
+- FR-4.7 engine/data-directory major precheck — **Shipped** (PGLM-68). Compares the engine's own major against the **pre-open** `PG_VERSION`; names both majors + the install line from the pinned registry instead of PGlite's opaque init failure. Skipped when there is no `PG_VERSION`, and for the target under `--dry-run` (FR-12.1). Also fixed a latent defect: a failing `close()` in the CLI's `finally` used to append a second error and bypass `run()`'s exit code.
 - NG-4.9 dry-run/backup/validate flags — **Shipped** (`--dry-run`, `--backup`/`--backup-dir`, `--validate`, `--on-existing`)
 
 ## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Shipped
@@ -69,7 +70,7 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 2. Upsert/`ON CONFLICT` re-run strategy — deferred (needs PK/unique introspection; doc 14).
 3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path — follow-ups in docs 10/11.
 4. Open product decisions flagged in docs 7–14 (e.g. backup default-on, identity-vs-serial normalization).
-5. Engine/cluster major precheck — the CLI reads both `PG_VERSION`s but never verifies the *named* engine actually bundles that major (PGLM-68, doc 15 context).
+5. ~~Engine/cluster major precheck.~~ **Done (PGLM-68)** — see FR-4.7 above.
 
 ## Maintenance triggers
 

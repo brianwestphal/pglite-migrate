@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { backupDataDir, type BackupOptions } from './backup.js';
 import { openDataDir, type OpenedCluster, type OpenOptions } from './loader.js';
 import { migrate } from './migrate.js';
+import { assertEngineMatchesDataDir } from './precheck.js';
 import type {
   EngineCacheMode,
   OnExisting,
@@ -252,8 +253,26 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
     }
     source = await openDataDir(args.source, args.sourceEngine, openOptions(args, sourceVersion));
     reportAcquired(io, 'source', source);
+    await assertEngineMatchesDataDir(source, {
+      dataDir: args.source,
+      expectedMajor: sourceVersion,
+      side: 'source',
+      engine: args.sourceEngine,
+    });
+
     target = await openDataDir(args.target, args.targetEngine, openOptions(args, targetVersion));
     reportAcquired(io, 'target', target);
+    if (!args.dryRun) {
+      // Skipped under --dry-run: the check has to query the target, which boots
+      // the cluster and writes to it. A dry run must leave the target
+      // byte-for-byte unchanged (FR-12.1), and it never touches it otherwise.
+      await assertEngineMatchesDataDir(target, {
+        dataDir: args.target,
+        expectedMajor: targetVersion,
+        side: 'target',
+        engine: args.targetEngine,
+      });
+    }
     if (args.dryRun) io.err('DRY RUN — no changes will be written to the target.');
     const report = await migrate({
       source,
@@ -284,8 +303,12 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
     io.err(err instanceof Error ? err.message : String(err));
     return 1;
   } finally {
-    await source?.close();
-    await target?.close();
+    // Closing must not mask the real failure. A cluster that never initialized
+    // (the classic case: an engine pointed at a data directory of another major)
+    // rejects on close, and letting that escape would both append a confusing
+    // second error to a clean diagnostic and bypass this function's exit code.
+    await source?.close().catch(() => undefined);
+    await target?.close().catch(() => undefined);
   }
 }
 

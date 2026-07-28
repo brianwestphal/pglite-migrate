@@ -255,6 +255,40 @@ describe('run', () => {
     expect(err.join('\n')).toContain('Done: 4 rows across 2 tables, 2 sequences aligned.');
   }, 30_000);
 
+  it('refuses an engine whose major does not match the data directory', async () => {
+    // A PG17 source opened with the PG18 engine — the classic misconfiguration.
+    const source = await seedDirWith(PGliteOld, 'source', SCHEMA_SQL, SEED_SQL);
+    const target = await seedDirWith(PGliteNew, 'target', SCHEMA_SQL);
+
+    const code = await run(
+      [source, target, '--source-engine', 'pglite-new', '--target-engine', 'pglite-new'],
+      io,
+    );
+    const errText = err.join('\n');
+
+    expect(code).toBe(1);
+    expect(errText).toContain('is PostgreSQL 17');
+    expect(errText).toContain('pglite-new');
+    expect(errText).toContain('npm install pglite-new@npm:@electric-sql/pglite@0.4.6');
+    // Regression guard: closing a cluster that never initialized used to reject
+    // out of the finally block, appending PGlite's opaque failure after the
+    // clean diagnostic and bypassing run()'s exit code.
+    expect(errText).not.toContain('PGlite failed to initialize properly');
+    expect(errText.trimEnd().endsWith('to acquire it automatically.')).toBe(true);
+  }, 30_000);
+
+  it('accepts matching engines on both sides', async () => {
+    const source = await seedDirWith(PGliteOld, 'source', SCHEMA_SQL, SEED_SQL);
+    const target = await seedDirWith(PGliteNew, 'target', SCHEMA_SQL);
+
+    const code = await run(
+      [source, target, '--source-engine', 'pglite-old', '--target-engine', 'pglite-new'],
+      io,
+    );
+    expect(code).toBe(0);
+    expect(err.join('\n')).not.toContain('PostgreSQL');
+  }, 30_000);
+
   it('fails with actionable guidance when an engine is missing and fetching is off', async () => {
     const source = await seedDirWith(PGliteOld, 'source', SCHEMA_SQL, SEED_SQL);
     const target = await seedDirWith(PGliteNew, 'target', SCHEMA_SQL);

@@ -11,6 +11,7 @@ The `pglite-migrate` bin (`src/cli.ts`) is the standalone, command-line face of 
 - **FR-4.4** On start, the CLI reads and reports each side's `PG_VERSION` (tolerating a missing/unreadable file) so the operator sees the major-version transition.
 - **FR-4.5** Progress is written to stderr (one line per table); the final summary reports total rows, table count, and sequences aligned. Warnings are printed.
 - **FR-4.6** On error, the message is printed to stderr and the process exits non-zero.
+- **FR-4.7 Engine/data-directory precheck** After opening each side, the CLI verifies that the engine actually serves that directory's major and fails early with a diagnostic naming the directory, both majors, the engine specifier, and the `npm install` line for a version that *would* work (from the pinned registry, [`15-engine-acquisition.md`](15-engine-acquisition.md)). Without it a mismatch surfaces as PGlite's opaque initialization failure, which names none of those. The check compares against the `PG_VERSION` read **before** opening — an engine initializes a fresh directory at its own major, so a post-open read would always agree and the check would be vacuous. It is skipped when the directory had no `PG_VERSION` (nothing to compare, and querying would boot a cluster into existence) and, for the **target**, under `--dry-run` (see [`12-dry-run.md`](12-dry-run.md) FR-12.1). Library equivalent: `assertEngineMatchesDataDir`.
 
 ## Current limitations / deferred
 

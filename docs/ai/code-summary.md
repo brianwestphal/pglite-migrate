@@ -22,7 +22,8 @@ src/
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
   reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); onUnsupported 'error' throws before any DDL
   loader.ts       openDataDir(dir, modulePath, options): open a data dir with a chosen PGlite package/alias; resolve-first, then optional acquisition; absolute paths go through pathToFileURL
-  version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster
+  version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster; readEngineMajor(db): ask a running engine which major it IS
+  precheck.ts     assertEngineMatchesDataDir(db, {dataDir, expectedMajor, side, engine}): fail early when an engine can't serve the dir; exports EngineMismatchError. expectedMajor must be the PRE-open PG_VERSION (a fresh dir is initialized at the engine's own major, so a post-open read is vacuous); null skips without querying
   engines.ts      Second public entry point (`pglite-migrate/engines`) — the opt-in acquisition API; the ONLY network surface
   engines/
     registry.ts   Pinned Postgres-major → PGlite version + sha512 table; resolveEngine / knownMajors / UnknownMajorError
@@ -37,7 +38,8 @@ tests/
   validate.test.ts                       counts / full-digest / sequence checks
   backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked)
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
-  loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle); parseArgs + run() over real temp dirs
+  loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle); parseArgs + run() over real temp dirs (incl. engine/dir major mismatch)
+  precheck.test.ts                       readEngineMajor + assertEngineMatchesDataDir: match, mismatch, unpinned major, no-PG_VERSION skip (asserts NO query is issued), refusing engine
   engines/registry.test.ts               Pinned table: lookup, unknown major, one-release-per-major, `15devel` parse
   engines/tar.test.ts                    Extractor + hostile archives (traversal, links, devices, bad checksum, pax/GNU overrides)
   engines/acquire.test.ts                Acquisition against a local HTTP server: integrity, cache hit/miss, both retention modes, races, mode transitions
@@ -48,6 +50,7 @@ tests/
   helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
   e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
   e2e/acquired-engine.test.ts            Migration whose SOURCE engine is downloaded, not installed. The only network-dependent suite — self-gates and ctx.skip()s offline
+  e2e/engine-mismatch.test.ts            Real PG18 engine on a real PG17 dir: the precheck's actionable error replaces PGlite's opaque init failure
 docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 ```
 
@@ -58,7 +61,8 @@ docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 - `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target, options?)`
 - `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
 - `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
-- `openDataDir(dir, modulePath?, options?)`, `readClusterVersion(dataDir)`
+- `openDataDir(dir, modulePath?, options?)`, `readClusterVersion(dataDir)`, `readEngineMajor(db)`
+- `assertEngineMatchesDataDir(db, options)` + `EngineMismatchError` — engine/data-directory major precheck
 - `resolveEngine(major)`, `knownMajors()`, `PGLITE_PACKAGE`, `UnknownMajorError` — the pinned registry (pure data, no network)
 - **`pglite-migrate/engines`** (second entry point, the only network surface): `acquireEngine(major, opts?)`, `acquireRelease(release, opts?)`, `defaultCacheDir()`, `resolveEntry(dir)`, `extractTarGz`, `safeEntryPath`, `EngineFetchError`, `IntegrityError`, `TarError`
 - Types: `PGliteLike`, `QueryOptions`, `MigrateOptions` (+ `validate`/`onValidationFailure`/`onExisting`/`dryRun`/`reconstructSchema`/`onUnsupported`), `MigrationReport`, `SchemaInfo`, `TableInfo`, `ColumnInfo`, `ForeignKey`, `SequenceInfo`, `ProgressEvent`, `TableResult`, `ValidationLevel`/`OnValidationFailure`/`ValidationReport`/`TableValidation`/`SequenceValidation`, `OnExisting`, `OnUnsupported`/`ReconstructOptions`, `ReconstructionReport`/`UnsupportedObject`, `BackupOptions`, `SwapOptions`/`SwapResult`, `TopoResult`, `OpenedCluster`, `OpenOptions`, `EngineCacheMode`, `EngineRelease`; value export `ValidationError`

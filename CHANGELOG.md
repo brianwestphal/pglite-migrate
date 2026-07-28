@@ -26,6 +26,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     acquisition module.
   - The package still has **zero runtime dependencies**.
 
+- **Engine/data-directory precheck.** Pointing `--source-engine` at an engine
+  that bundles the wrong PostgreSQL major used to surface as PGlite's opaque
+  `PGlite failed to initialize properly`, which names neither major, nor the
+  directory, nor the engine. The CLI now fails early with all of that plus the
+  `npm install` line for a version that would work. Available to library callers
+  as `assertEngineMatchesDataDir`.
+
 ### Changed
 
 - A missing engine now reports the detected major, the exact install command,
@@ -35,6 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `openDataDir` now imports absolute engine paths via `pathToFileURL`, which
   previously would have failed on Windows.
+- A cluster that never initialized rejects on `close()`; the CLI's cleanup let
+  that escape, appending a second confusing error after the real one and
+  bypassing the exit code it had already decided on.
 
 ---
 
