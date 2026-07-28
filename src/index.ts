@@ -14,7 +14,7 @@ export {
   UnknownMajorError,
 } from './engines/registry.js';
 export { introspectSchema } from './introspect.js';
-export { openDataDir, type OpenedCluster } from './loader.js';
+export { openDataDir, type OpenedCluster, type OpenOptions } from './loader.js';
 export { migrate, planMigration } from './migrate.js';
 export { reconstructSchema } from './reconstruct.js';
 export { swapIntoPlace, type SwapOptions, type SwapResult } from './swap.js';
@@ -27,6 +27,7 @@ export {
 } from './transfer.js';
 export type {
   ColumnInfo,
+  EngineCacheMode,
   EngineRelease,
   ForeignKey,
   MigrateOptions,

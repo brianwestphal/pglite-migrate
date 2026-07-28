@@ -70,6 +70,30 @@ export function makeTgz(entries: TarEntry[]): Buffer {
 }
 
 /**
+ * A stand-in engine package exporting a `PGlite` constructor with just enough
+ * surface for the loader. Real engine behavior is proven in the e2e suite; this
+ * exists so the acquire-then-open path can be exercised without the network.
+ */
+export function makeFakeEngineTgz(): Buffer {
+  const source = [
+    'export class PGlite {',
+    '  constructor(dataDir) { this.dataDir = dataDir; this.closed = false; }',
+    '  async query(sql) { return { rows: [{ sql, dataDir: this.dataDir }] }; }',
+    '  async exec() { return undefined; }',
+    '  async close() { this.closed = true; }',
+    '}',
+    '',
+  ].join('\n');
+  return makeTgz([
+    {
+      name: 'package/package.json',
+      body: JSON.stringify({ name: 'fake-pglite', version: '9.9.9', module: 'dist/index.js' }),
+    },
+    { name: 'package/dist/index.js', body: source },
+  ]);
+}
+
+/**
  * A minimal but realistic npm-style package archive: everything under a
  * `package/` prefix, with a manifest and an ESM entry point.
  */
