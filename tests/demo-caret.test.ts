@@ -20,8 +20,25 @@ import { describe, expect, it } from 'vitest';
  *
  * These are CSS-animation facts we can read straight out of the committed SVG —
  * no browser. The primary guard asserts the reveal and caret-position share a
- * timing function (the exact thing DM-1204 broke); two secondary guards assert
- * they also share the ramp window and the caret parks at the text edge.
+ * timing function (the exact thing DM-1204 broke); the rest assert they step in
+ * lockstep, that the caret never trails the reveal edge, and that it parks at
+ * the text edge.
+ *
+ * **domotion 0.21.1 changed the emitted structure** (PGLM-59). 0.13.3 wrote a
+ * two-stop *continuous* ramp per line — `0%…{width:.01px} 46.26%…{width:360px}`
+ * — and relied on `linear` to keep that smooth slide in lockstep with an equally
+ * smooth caret. 0.21.1 writes a **per-character staircase** (~one stop every
+ * ~0.39%, ~9.27px apart) driven by `step-end`, so the reveal jumps a whole glyph
+ * at a time instead of clipping through partial characters, and the caret is
+ * emitted on the *same stop times*.
+ *
+ * That makes the DM-1204 failure mode structurally impossible rather than merely
+ * avoided, so these guards assert the invariant instead of the 0.13.3 spelling:
+ * the timing function must be constant-rate or discrete (never an easing curve —
+ * `ease` *was* the bug), and the caret must step on exactly the reveal's stop
+ * times and never trail its edge by more than a character. The per-stop checks
+ * are strictly stronger than the old window-endpoint comparison, which could
+ * only see the two ends of a slide.
  *
  * Scope: the typing/caret timeline only. Glyph layout is domotion's concern.
  */
@@ -144,6 +161,39 @@ function revealSegments(css: string, line: number): Ramp[] {
   return segments;
 }
 
+/**
+ * Timing functions that advance at a constant rate (`linear`) or in discrete
+ * jumps (`step-*`). Anything else is an easing curve, which is what let the
+ * reveal edge accelerate away from the caret in DM-1204.
+ */
+const NON_EASING = new Set(['linear', 'step-start', 'step-end', 'steps']);
+
+/** Every `(stop%, value)` pair in a keyframe body, ascending by stop. */
+function stopPairs(body: string): { stop: number; value: number }[] {
+  const pairs: { stop: number; value: number }[] = [];
+  const re = /([0-9.,%a-z\s]+?)\{([^}]*)\}/g;
+  for (let m = re.exec(body); m !== null; m = re.exec(body)) {
+    const [, selRaw, decl] = m;
+    const numMatch = /-?\d*\.?\d+/.exec(decl.replace(/^[^:]*:/, ''));
+    const value = numMatch ? Math.abs(Number(numMatch[0])) : 0;
+    for (const s of selRaw.split(',').map((x) => x.trim()).filter(Boolean)) {
+      pairs.push({ stop: s === 'from' ? 0 : s === 'to' ? 100 : Number.parseFloat(s), value });
+    }
+  }
+  return pairs.sort((a, b) => a.stop - b.stop);
+}
+
+/**
+ * The stops at which a track is mid-motion — i.e. off its rest value and before
+ * the final park at `to`/100%. These are the instants where a lagging caret
+ * would actually be visible.
+ */
+function movingStops(body: string): { stop: number; value: number }[] {
+  const pairs = stopPairs(body);
+  const rest = Math.min(...pairs.map((p) => p.value));
+  return pairs.filter((p) => p.value > rest + 1 && p.stop < 100);
+}
+
 describe('assets/demos caret tracks the typed text (PGLM-37 / DM-1204)', () => {
   for (const name of DEMOS) {
     describe(`${name}.svg`, () => {
@@ -161,8 +211,9 @@ describe('assets/demos caret tracks the typed text (PGLM-37 / DM-1204)', () => {
 
       // The exact DM-1204 guard: the reveal eased (default) while the caret was
       // linear, so the reveal edge ran ahead mid-type. Require both to use the
-      // same constant-speed timing so the caret can never lag the reveal edge.
-      it('drives the reveal and the caret with the same constant-speed timing', () => {
+      // same timing, and that it advances at a constant rate or in discrete
+      // steps — never an easing curve, which is the shape of the bug.
+      it('drives the reveal and the caret with the same non-easing timing', () => {
         for (const line of lines) {
           const caretList = animationValue(css, `.t${line.toString()}-caret`)!;
           const caretSeg = segmentFor(caretList, `t${line.toString()}-caret-pos`)!;
@@ -172,17 +223,54 @@ describe('assets/demos caret tracks the typed text (PGLM-37 / DM-1204)', () => {
             const revList = animationValue(css, `.t${line.toString()}-rev${m.toString()}`)!;
             const revTiming = timingFunction(revList);
             expect(revTiming).toBe(caretTiming);
-            expect(revTiming).toBe('linear');
+            expect(NON_EASING.has(revTiming)).toBe(true);
           }
         }
       });
 
-      it('ramps the caret over the same keyframe window as the reveal', () => {
+      // Stronger than comparing window endpoints: with a per-character staircase
+      // the caret must land on exactly the reveal's stop times, so it cannot
+      // drift at any character mid-line.
+      it('steps the caret on exactly the reveal stop times', () => {
         for (const line of lines) {
-          const caret = parseRamp(keyframesBody(css, `t${line.toString()}-caret-pos`)!);
-          const reveals = revealSegments(css, line);
-          expect(caret.rampStart).toBeCloseTo(Math.min(...reveals.map((r) => r.rampStart)), 1);
-          expect(caret.rampEnd).toBeCloseTo(Math.max(...reveals.map((r) => r.rampEnd)), 1);
+          const caretStops = movingStops(keyframesBody(css, `t${line.toString()}-caret-pos`)!).map(
+            (p) => p.stop,
+          );
+          const revStops = [
+            ...new Set(
+              Array.from({ length: revealSegments(css, line).length }, (_, m) =>
+                movingStops(keyframesBody(css, `t${line.toString()}-rev${m.toString()}`)!),
+              )
+                .flat()
+                .map((p) => p.stop),
+            ),
+          ].sort((a, b) => a - b);
+
+          expect(caretStops.length).toBeGreaterThan(0);
+          expect(caretStops).toEqual(revStops);
+        }
+      });
+
+      // The DM-1204 symptom was the caret trailing the text by 10–20 chars in
+      // the middle of a line, with both ends correct. Check every stop, not the
+      // endpoints, so a mid-line lag cannot hide.
+      it('never lets the caret trail the reveal edge by more than one character', () => {
+        const CHAR_PX = 12; // one monospace cell, with headroom (glyphs are ~9.3px)
+        for (const line of lines) {
+          const caretStops = movingStops(keyframesBody(css, `t${line.toString()}-caret-pos`)!);
+          const revByStop = new Map<number, number>();
+          for (let m = 0; m < revealSegments(css, line).length; m++) {
+            for (const p of movingStops(keyframesBody(css, `t${line.toString()}-rev${m.toString()}`)!)) {
+              revByStop.set(p.stop, Math.max(revByStop.get(p.stop) ?? 0, p.value));
+            }
+          }
+          for (const { stop, value } of caretStops) {
+            const revWidth = revByStop.get(stop);
+            if (revWidth === undefined) continue;
+            const behind = revWidth - value;
+            expect(behind).toBeGreaterThanOrEqual(0); // never ahead of the text
+            expect(behind).toBeLessThanOrEqual(CHAR_PX); // and never a char behind
+          }
         }
       });
 
