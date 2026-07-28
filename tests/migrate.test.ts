@@ -177,6 +177,143 @@ describe('migrate (re-run safety / onExisting)', () => {
   });
 });
 
+/**
+ * Standalone / reconstruct mode, at the `migrate` level (PGLM-57).
+ *
+ * The two-engine version of this lives in `tests/e2e/standalone.test.ts`; this
+ * is the unit half of the project's double-coverage rule, and specifically pins
+ * the warnings loop that turns each detected out-of-scope object into a
+ * `MigrationReport.warnings` entry.
+ */
+describe('migrate (standalone / reconstructSchema)', () => {
+  /** App-class objects plus two out-of-scope ones (a view and a matview). */
+  const SOURCE_SCHEMA = `
+    CREATE TYPE status AS ENUM ('active', 'inactive');
+    CREATE TABLE authors (
+      id serial PRIMARY KEY,
+      name text NOT NULL,
+      state status DEFAULT 'active'
+    );
+    CREATE TABLE books (
+      id serial PRIMARY KEY,
+      author_id integer NOT NULL REFERENCES authors(id),
+      title text NOT NULL
+    );
+    CREATE INDEX books_author_idx ON books (author_id);
+    CREATE VIEW author_names AS SELECT name FROM authors;
+    CREATE MATERIALIZED VIEW book_titles AS SELECT title FROM books;
+  `;
+  const SEED = `
+    INSERT INTO authors (name) VALUES ('Ursula'), ('Octavia');
+    INSERT INTO books (author_id, title) VALUES (1, 'A Wizard of Earthsea'), (2, 'Kindred');
+  `;
+
+  let source: PGlite;
+  let target: PGlite;
+
+  beforeEach(async () => {
+    source = new PGlite();
+    await source.exec(SOURCE_SCHEMA);
+    await source.exec(SEED);
+    target = new PGlite(); // deliberately empty — no schema created up front
+  });
+
+  afterEach(async () => {
+    await source.close();
+    await target.close();
+  });
+
+  it('rebuilds the schema on an empty target and transfers the rows', async () => {
+    const report = await migrate({ source, target, reconstructSchema: true });
+
+    expect([...(report.reconstruction?.tables ?? [])].sort()).toEqual([
+      'public.authors',
+      'public.books',
+    ]);
+    expect(report.reconstruction?.enums).toContain('public.status');
+    expect(report.totalRows).toBe(4);
+    expect(report.validation?.ok).toBe(true);
+
+    // The target really holds the data, on a schema it did not have before.
+    const { rows } = await target.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM books',
+    );
+    expect(rows[0].count).toBe('2');
+  });
+
+  it('emits one warning per out-of-scope object it did not reconstruct', async () => {
+    const report = await migrate({ source, target, reconstructSchema: true });
+
+    // Both are reported on the reconstruction report…
+    expect(report.reconstruction?.unsupported).toContainEqual({
+      kind: 'view',
+      name: 'public.author_names',
+    });
+    expect(report.reconstruction?.unsupported).toContainEqual({
+      kind: 'materialized view',
+      name: 'public.book_titles',
+    });
+
+    // …and each becomes a warning. Two objects, so the loop must run twice —
+    // a single push would satisfy a one-object fixture and hide a bug.
+    expect(report.warnings).toContain('Unsupported view not reconstructed: public.author_names.');
+    expect(report.warnings).toContain(
+      'Unsupported materialized view not reconstructed: public.book_titles.',
+    );
+    const unsupportedWarnings = report.warnings.filter((w) => w.startsWith('Unsupported '));
+    expect(unsupportedWarnings).toHaveLength(report.reconstruction?.unsupported.length ?? 0);
+
+    // Nothing was silently dropped: the objects are still absent on the target.
+    const { rows } = await target.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM pg_class WHERE relname = 'author_names'`,
+    );
+    expect(rows[0].count).toBe('0');
+  });
+
+  it('produces no unsupported warnings when the source is entirely app-class', async () => {
+    const clean = new PGlite();
+    const cleanTarget = new PGlite();
+    try {
+      await clean.exec('CREATE TABLE t (id serial PRIMARY KEY, s text)');
+      await clean.exec("INSERT INTO t (s) VALUES ('a')");
+
+      const report = await migrate({ source: clean, target: cleanTarget, reconstructSchema: true });
+      expect(report.reconstruction?.unsupported).toEqual([]);
+      expect(report.warnings).toEqual([]);
+      expect(report.totalRows).toBe(1);
+    } finally {
+      await clean.close();
+      await cleanTarget.close();
+    }
+  });
+
+  it("throws before transferring anything when onUnsupported is 'error'", async () => {
+    await expect(
+      migrate({ source, target, reconstructSchema: true, onUnsupported: 'error' }),
+    ).rejects.toThrow();
+
+    // It must refuse *before* touching the target — no tables, no rows.
+    const { rows } = await target.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r' AND n.nspname = 'public'`,
+    );
+    expect(rows[0].count).toBe('0');
+  });
+
+  it('leaves the target untouched when reconstructSchema is not set', async () => {
+    // Without the flag the target schema is the caller's responsibility, so a
+    // bare target fails rather than being silently rebuilt.
+    await expect(migrate({ source, target })).rejects.toThrow();
+    const { rows } = await target.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r' AND n.nspname = 'public'`,
+    );
+    expect(rows[0].count).toBe('0');
+  });
+});
+
 describe('migrate (dry run)', () => {
   let source: PGlite;
   let target: PGlite;
