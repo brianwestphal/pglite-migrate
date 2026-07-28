@@ -56,6 +56,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist coverage node_modules/.cache",
     "commit-message": "gitgist --staged --commit-message",
+    "changelog-analysis": "node scripts/changelog-analysis.mjs",
     "release": "bash scripts/release.sh",
     "release:beta": "bash scripts/release.sh --beta",
     "prepublishOnly": "npm run build"

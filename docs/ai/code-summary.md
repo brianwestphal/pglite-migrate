@@ -92,9 +92,10 @@ docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 
 ## Build / test
 
-- Build: `npm run build` (tsup → `dist/index.js` + `dist/cli.js` + `.d.ts`)
+- Build: `npm run build` (tsup → `dist/index.js` + `dist/engines.js` + `dist/cli.js` + `.d.ts`)
 - Unit: `npm run test` · E2E: `npm run test:e2e` · Both: `npm run test:all`
 - Lint: `npm run lint` · Types: `npm run typecheck`
+- Release-adjacent: `npm run commit-message` (gitgist) · `npm run changelog-analysis -- --next <ver>` (diff analysis feeding the `technical-changelog` skill; prints only, writes nothing)
 
 ## Maintenance triggers
 
