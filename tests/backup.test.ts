@@ -123,3 +123,36 @@ describe('backupDataDir', () => {
     ).rejects.toThrow(/verification failed/);
   });
 });
+
+describe('backupDataDir (no PG_VERSION)', () => {
+  let dir: string;
+  let realCp: typeof fsp.cp;
+
+  beforeAll(async () => {
+    const actual = await vi.importActual<typeof fsp>('node:fs/promises');
+    realCp = actual.cp;
+  });
+
+  beforeEach(async () => {
+    vi.mocked(fsp.cp).mockImplementation(realCp); // reset to passthrough
+    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-backup-nover-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('backs up a directory that has no PG_VERSION, verifying counts only', async () => {
+    // A staging directory that is not (yet) a cluster is a reachable state the
+    // code deliberately tolerates: the PG_VERSION check is skipped and the
+    // file/byte comparison still gates the result.
+    const plain = join(dir, 'plain');
+    await mkdir(plain, { recursive: true });
+    await writeFile(join(plain, 'data.txt'), 'hello');
+
+    const backup = await backupDataDir(plain, { timestamp: '2026-06-16T12:00:00.000Z' });
+
+    expect(basename(backup)).toBe('plain.bak-2026-06-16T12-00-00.000Z');
+    expect(await readFile(join(backup, 'data.txt'), 'utf8')).toBe('hello');
+  });
+});

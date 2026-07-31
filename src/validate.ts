@@ -1,4 +1,4 @@
-import { countRows } from './catalog.js';
+import { countRows, tableKey } from './catalog.js';
 import { quoteLiteral, quoteQualified } from './ident.js';
 import type {
   PGliteLike,
@@ -79,7 +79,7 @@ export async function validateMigration(
       digestMatch = (await tableDigest(source, t)) === (await tableDigest(target, t));
       ok = digestMatch;
     }
-    tables.push({ table: `${t.schema}.${t.name}`, sourceRows, targetRows, digestMatch, ok });
+    tables.push({ table: tableKey(t), sourceRows, targetRows, digestMatch, ok });
   }
 
   const sequences: SequenceValidation[] = [];
@@ -89,7 +89,7 @@ export async function validateMigration(
     const targetValue = await sequenceValue(target, s.schema, s.name);
     // The target must be at least as advanced so nextval cannot collide.
     const ok = targetValue !== null && BigInt(targetValue) >= BigInt(sourceValue);
-    sequences.push({ sequence: `${s.schema}.${s.name}`, sourceValue, targetValue, ok });
+    sequences.push({ sequence: tableKey(s), sourceValue, targetValue, ok });
   }
 
   const ok = tables.every((t) => t.ok) && sequences.every((s) => s.ok);

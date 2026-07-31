@@ -2,7 +2,7 @@
 
 **Status: Implemented (PGLM-25), opt-in.** `reconstructSchema(source, target, { onUnsupported })` (`src/reconstruct.ts`) rebuilds the app-class schema; `migrate({ reconstructSchema: true })` and the CLI's `--reconstruct-schema` turn it on. This page stays the short overview — the implementation-ready spec is [`9-standalone-schema-reconstruction.md`](9-standalone-schema-reconstruction.md).
 
-**Known gaps in the shipped implementation** (each has a follow-up ticket): non-`public` schemas are not created on the target, so a multi-schema source fails; `CREATE SEQUENCE` is emitted without the source's start/increment/min/max/cycle parameters and without re-establishing `OWNED BY`; and domain/composite types are neither reconstructed nor reported as unsupported. See doc 9 for detail.
+**One known gap:** under the default `onUnsupported: 'warn'`, a source whose column uses a **domain** or **composite type** still fails — those types are detected and reported, but not rebuilt. That is the open scope decision in doc 9 OQ-9.5, pinned by an explicit test. Everything else the PGLM-74 audit found (multi-schema sources, sequence parameters, `OWNED BY`, incomplete unsupported-object detection) is fixed.
 
 The app-driven path (`2-data-migration.md`) assumes the target schema already exists because the host application created it. The **standalone** case — migrating a PGlite data directory with no host app present (e.g. the CLI pointed at two bare directories) — has no app to create the schema, so the migrator must reconstruct it on the target from the source.
 
@@ -23,7 +23,7 @@ Reconstructing DDL is the single largest source of complexity in logical migrati
 ## Scope boundary (hard line)
 
 - **NFR-3.4 (in scope)** App-class schema objects: tables, columns, custom types/enums, sequences, primary/unique/check/foreign-key constraints, indexes.
-- **NG-3.5 (out of scope)** Full `pg_dump` parity: views, functions, triggers, RLS policies, partitioning, operator classes, comments, grants. These form a long tail that turns a focused tool into a `pg_dump` reimplementation. If a source uses them, the standalone migrator **detects and reports** them as unsupported rather than silently dropping them — `ReconstructionReport.unsupported`, folded into `MigrationReport.warnings`, and escalated to a pre-DDL throw under `onUnsupported: 'error'`. *Detection is currently partial*: views, materialized views, partitioned tables, functions, triggers, and RLS policies are reported; operator classes, non-default collations, comments, grants, extensions, foreign tables, rules, and domain/composite types are not.
+- **NG-3.5 (out of scope)** Full `pg_dump` parity: views, functions, triggers, RLS policies, partitioning, operator classes, comments, grants. These form a long tail that turns a focused tool into a `pg_dump` reimplementation. If a source uses them, the standalone migrator **detects and reports** them as unsupported rather than silently dropping them — `ReconstructionReport.unsupported`, folded into `MigrationReport.warnings`, and escalated to a pre-DDL throw under `onUnsupported: 'error'`. **Detection is complete** as of PGLM-79/80: views, materialized views, partitioned and foreign tables, domains, composite types, functions, triggers, RLS policies, rules, operator classes, collations, comments, grants, and extensions.
 
 ## Resolved questions
 

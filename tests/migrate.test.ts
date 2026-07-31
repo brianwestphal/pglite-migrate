@@ -128,6 +128,12 @@ describe('migrate (orchestrator)', () => {
       warnings: [],
       deferredTables: [],
       skippedTables: [],
+      onExisting: 'error',
+      truncatedTables: [],
+      // Validation is skipped entirely when the source has no tables, so the
+      // field is present-but-undefined rather than a report of nothing.
+      validation: undefined,
+      reconstruction: undefined,
     });
   });
 });
@@ -174,6 +180,101 @@ describe('migrate (re-run safety / onExisting)', () => {
       'SELECT count(*)::text AS count FROM authors',
     );
     expect(authors.rows[0].count).toBe('2'); // unchanged
+  });
+
+  it('echoes the active strategy and the tables truncate emptied (FR-14.5/FR-14.10)', async () => {
+    const report = await migrate({ source, target, onExisting: 'truncate' });
+
+    expect(report.onExisting).toBe('truncate');
+    // The only record that a destructive re-run discarded data.
+    expect([...report.truncatedTables].sort()).toEqual(['public.authors', 'public.books']);
+  });
+
+  it('reports the default strategy when the caller passes none', async () => {
+    // The target is populated by beforeEach, so `error` refuses — assert the
+    // default on a clean pair instead.
+    const s2 = new PGlite();
+    const t2 = new PGlite();
+    try {
+      await s2.exec(SCHEMA_SQL);
+      await t2.exec(SCHEMA_SQL);
+      const report = await migrate({ source: s2, target: t2 });
+      expect(report.onExisting).toBe('error');
+      expect(report.truncatedTables).toEqual([]);
+    } finally {
+      await s2.close();
+      await t2.close();
+    }
+  });
+});
+
+/**
+ * `skip` exists for the interrupted-run case, which by definition leaves the
+ * target *partially* populated. The suite above always starts from a fully
+ * populated target, so the mixed skip-some/fill-others path never ran (PGLM-89).
+ */
+describe('migrate (re-run safety / partially-populated target)', () => {
+  let source: PGlite;
+  let target: PGlite;
+
+  beforeEach(async () => {
+    source = new PGlite();
+    target = new PGlite();
+    await source.exec(SCHEMA_SQL);
+    await source.exec(SEED_SQL);
+    await target.exec(SCHEMA_SQL);
+  });
+
+  afterEach(async () => {
+    await source.close();
+    await target.close();
+  });
+
+  /** Copy just the parent table across, simulating a run that stopped halfway. */
+  async function populateAuthorsOnly(): Promise<void> {
+    await target.exec(`INSERT INTO authors (id, name) VALUES (1, 'Ursula'), (2, 'Octavia')`);
+  }
+
+  it('fills the empty tables and leaves the populated one alone', async () => {
+    await populateAuthorsOnly();
+
+    const report = await migrate({ source, target, onExisting: 'skip' });
+
+    expect(report.skippedTables).toEqual(['public.authors']);
+    // The mixed path: books is transferred while authors is skipped. The
+    // all-or-nothing fixture could never distinguish this from totalRows === 0.
+    expect(report.totalRows).toBeGreaterThan(0);
+    expect(report.tables.map((t) => t.table)).toEqual(['public.books']);
+
+    const counts = await target.query<{ a: string; b: string }>(
+      `SELECT (SELECT count(*)::text FROM authors) AS a, (SELECT count(*)::text FROM books) AS b`,
+    );
+    expect(counts.rows[0]).toEqual({ a: '2', b: '2' }); // authors unchanged, books filled
+  });
+
+  it('keeps the foreign key satisfied when a skipped parent feeds a filled child', async () => {
+    await populateAuthorsOnly();
+
+    await migrate({ source, target, onExisting: 'skip' });
+
+    // Every transferred book must resolve to an author row that was already
+    // there — the case where skipping a parent could silently orphan children.
+    const orphans = await target.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM books b
+        WHERE NOT EXISTS (SELECT 1 FROM authors a WHERE a.id = b.author_id)`,
+    );
+    expect(orphans.rows[0].n).toBe('0');
+  });
+
+  it('does not duplicate rows in the table it skipped', async () => {
+    await populateAuthorsOnly();
+
+    await migrate({ source, target, onExisting: 'skip' });
+
+    const dupes = await target.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM (SELECT id FROM authors GROUP BY id HAVING count(*) > 1) d`,
+    );
+    expect(dupes.rows[0].n).toBe('0');
   });
 });
 

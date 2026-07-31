@@ -1,4 +1,4 @@
-import { regclassLiteral, systemSchemaFilter } from './catalog.js';
+import { objectKey, regclassLiteral, systemSchemaFilter, tableKey } from './catalog.js';
 import { quoteIdent, quoteLiteral, quoteQualified } from './ident.js';
 import type {
   PGliteLike,
@@ -11,15 +11,38 @@ import type {
 const SYS = systemSchemaFilter('n.nspname');
 
 /**
+ * Splice a catalog-sourced integer into DDL.
+ *
+ * Sequence bounds arrive as text from `pg_sequence` and are not identifiers, so
+ * `src/ident.ts` does not apply — but they are still spliced into SQL, so they
+ * are validated rather than trusted (project convention: validate at trust
+ * boundaries, don't assert).
+ */
+function numericLiteral(value: string, field: string): string {
+  // `pg_sequence`'s bounds are bigint columns cast to text, so a non-numeric
+  // value cannot come from a real engine. The guard exists so that a
+  // hand-rolled `PGliteLike` cannot turn a catalog read into SQL injection;
+  // deliberately not covered for the same reason it cannot fire.
+  /* v8 ignore next 3 */
+  if (!/^-?\d+$/.test(value)) {
+    throw new Error(`Refusing to reconstruct: non-numeric ${field} from the catalog: ${value}`);
+  }
+  return value;
+}
+
+/**
  * Reconstruct the app-class schema of `source` onto `target` (the no-host-app
- * "standalone" path). Emits DDL in dependency order — enums → sequences →
- * tables (+ defaults) → constraints → indexes — using PostgreSQL's own
- * `pg_get_*def` functions, which run inside PGlite (no `pg_dump` binary).
+ * "standalone" path). Emits DDL in dependency order — schemas → enums →
+ * sequences → tables (+ defaults) → sequence ownership → constraints → indexes —
+ * using PostgreSQL's own `pg_get_*def` functions, which run inside PGlite (no
+ * `pg_dump` binary).
  *
  * Scope is app-class objects only (tables, columns, custom enums, sequences,
- * PK/UNIQUE/CHECK/FK, indexes). Out-of-scope objects (views, materialized
- * views, partitioned tables, functions, triggers, RLS policies) are **detected
- * and reported**, never silently dropped — see `docs/9`.
+ * PK/UNIQUE/CHECK/FK, indexes). Out-of-scope objects — views, materialized
+ * views, partitioned and foreign tables, domains and composite types,
+ * functions, triggers, RLS policies, rules, operator classes, collations,
+ * comments, grants, and extensions — are **detected and reported**, never
+ * silently dropped. See `docs/9`.
  *
  * `options.onUnsupported` (default `warn`) controls what happens when the source
  * has out-of-scope objects: `warn` rebuilds the app-class schema anyway and
@@ -44,12 +67,40 @@ export async function reconstructSchema(
     );
   }
 
+  // Schemas first: every qualified CREATE below lands inside one, and only
+  // `public` is guaranteed to exist on a fresh target (PGLM-76).
+  const schemas = await reconstructSchemas(source, target);
   const enums = await reconstructEnums(source, target);
   const sequences = await reconstructSequences(source, target);
   const tables = await reconstructTables(source, target);
+  // Ownership is re-linked only once the owning tables exist (PGLM-78).
+  await reconstructSequenceOwnership(source, target);
   const constraints = await reconstructConstraints(source, target);
   const indexes = await reconstructIndexes(source, target);
-  return { enums, sequences, tables, constraints, indexes, unsupported };
+  return { schemas, enums, sequences, tables, constraints, indexes, unsupported };
+}
+
+/**
+ * Create every non-system schema the source uses, so the qualified DDL that
+ * follows has somewhere to land. `public` already exists on a fresh target and
+ * is skipped.
+ *
+ * `introspectSchema` covers all non-system schemas, so reconstruction must too —
+ * without this a multi-schema source fails on the first qualified `CREATE`.
+ */
+async function reconstructSchemas(source: PGliteLike, target: PGliteLike): Promise<string[]> {
+  const { rows } = await source.query<{ name: string }>(
+    `SELECT n.nspname AS name
+       FROM pg_namespace n
+      WHERE ${SYS} AND n.nspname <> 'public'
+      ORDER BY n.nspname`,
+  );
+  const created: string[] = [];
+  for (const r of rows) {
+    await target.exec(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(r.name)}`);
+    created.push(r.name);
+  }
+  return created;
 }
 
 async function reconstructEnums(source: PGliteLike, target: PGliteLike): Promise<string[]> {
@@ -67,28 +118,95 @@ async function reconstructEnums(source: PGliteLike, target: PGliteLike): Promise
   for (const r of rows) {
     const labels = r.labels.map((l) => quoteLiteral(l)).join(', ');
     await target.exec(`CREATE TYPE ${quoteQualified(r.schema, r.name)} AS ENUM (${labels})`);
-    created.push(`${r.schema}.${r.name}`);
+    created.push(tableKey(r));
   }
   return created;
+}
+
+interface ReconSequence {
+  schema: string;
+  name: string;
+  data_type: string;
+  start_value: string;
+  increment_by: string;
+  min_value: string;
+  max_value: string;
+  cycle: boolean;
 }
 
 async function reconstructSequences(source: PGliteLike, target: PGliteLike): Promise<string[]> {
   // Standalone (serial) sequences only; identity-owned sequences (deptype 'i')
   // are recreated implicitly by their GENERATED … AS IDENTITY column.
-  const { rows } = await source.query<{ schema: string; name: string }>(
-    `SELECT n.nspname AS schema, c.relname AS name
+  //
+  // `pg_sequence` carries the defining parameters. Emitting them matters even
+  // though `applySequences` later setvals `last_value`: that only fixes where
+  // the sequence *is*, not how it advances or where it stops (PGLM-77).
+  const { rows } = await source.query<ReconSequence>(
+    `SELECT n.nspname AS schema, c.relname AS name,
+            format_type(s.seqtypid, NULL) AS data_type,
+            s.seqstart::text AS start_value,
+            s.seqincrement::text AS increment_by,
+            s.seqmin::text AS min_value,
+            s.seqmax::text AS max_value,
+            s.seqcycle AS cycle
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_sequence s ON s.seqrelid = c.oid
       WHERE c.relkind = 'S' AND ${SYS}
         AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'i')
       ORDER BY n.nspname, c.relname`,
   );
   const created: string[] = [];
   for (const r of rows) {
-    await target.exec(`CREATE SEQUENCE IF NOT EXISTS ${quoteQualified(r.schema, r.name)}`);
-    created.push(`${r.schema}.${r.name}`);
+    await target.exec(
+      `CREATE SEQUENCE IF NOT EXISTS ${quoteQualified(r.schema, r.name)} AS ${r.data_type}` +
+        ` INCREMENT BY ${numericLiteral(r.increment_by, 'sequence increment')}` +
+        ` MINVALUE ${numericLiteral(r.min_value, 'sequence minvalue')}` +
+        ` MAXVALUE ${numericLiteral(r.max_value, 'sequence maxvalue')}` +
+        ` START WITH ${numericLiteral(r.start_value, 'sequence start')}` +
+        (r.cycle ? ' CYCLE' : ' NO CYCLE'),
+    );
+    created.push(tableKey(r));
   }
   return created;
+}
+
+/**
+ * Re-establish `ALTER SEQUENCE … OWNED BY <table>.<column>` for the sequences a
+ * `serial` column owns.
+ *
+ * Must run after the tables exist. Without it the column default `nextval(…)`
+ * still works — which is why the omission hides — but the sequence is orphaned:
+ * dropping the table leaves it behind, and `pg_get_serial_sequence` returns
+ * null, breaking any tooling that resolves a column's sequence through it.
+ */
+async function reconstructSequenceOwnership(
+  source: PGliteLike,
+  target: PGliteLike,
+): Promise<void> {
+  const { rows } = await source.query<{
+    seq_schema: string;
+    seq_name: string;
+    tbl_schema: string;
+    tbl_name: string;
+    col: string;
+  }>(
+    `SELECT n.nspname AS seq_schema, c.relname AS seq_name,
+            tn.nspname AS tbl_schema, tc.relname AS tbl_name, a.attname AS col
+       FROM pg_depend d
+       JOIN pg_class c ON c.oid = d.objid AND c.relkind = 'S'
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_class tc ON tc.oid = d.refobjid
+       JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+       JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+      WHERE d.classid = 'pg_class'::regclass AND d.deptype = 'a' AND ${SYS}`,
+  );
+  for (const r of rows) {
+    await target.exec(
+      `ALTER SEQUENCE ${quoteQualified(r.seq_schema, r.seq_name)} OWNED BY ` +
+        `${quoteQualified(r.tbl_schema, r.tbl_name)}.${quoteIdent(r.col)}`,
+    );
+  }
 }
 
 interface ReconColumn {
@@ -127,7 +245,7 @@ async function reconstructTables(source: PGliteLike, target: PGliteLike): Promis
     );
     const defs = cols.map((c) => columnDef(c)).join(',\n  ');
     await target.exec(`CREATE TABLE ${qualified} (\n  ${defs}\n)`);
-    created.push(`${t.schema}.${t.name}`);
+    created.push(tableKey(t));
   }
   return created;
 }
@@ -171,7 +289,7 @@ async function reconstructConstraints(source: PGliteLike, target: PGliteLike): P
     await target.exec(
       `ALTER TABLE ${quoteQualified(r.schema, r.table)} ADD CONSTRAINT ${quoteIdent(r.name)} ${r.def}`,
     );
-    created.push(`${r.schema}.${r.table}.${r.name}`);
+    created.push(objectKey(r.schema, r.table, r.name));
   }
   return created;
 }
@@ -196,42 +314,131 @@ async function reconstructIndexes(source: PGliteLike, target: PGliteLike): Promi
   return created;
 }
 
-/** Detect out-of-scope objects so they can be reported rather than dropped. */
+/** One out-of-scope object class: a query returning `{ kind, name }` rows. */
+interface Detector {
+  /** What NG-9.10 class this covers, for the report's `kind` field. */
+  label: string;
+  /** SQL yielding `kind` (optional, overrides `label`) and `name` columns. */
+  sql: string;
+}
+
+/**
+ * Every object class NG-9.10 puts out of scope, one query each.
+ *
+ * Table-driven rather than a run of near-identical blocks: the list is the
+ * requirement, so it should read as a list. Each query yields a `name` column
+ * already in its reported form, and may yield a `kind` column to distinguish
+ * sub-kinds (relkinds, type kinds) within one class.
+ */
+const DETECTORS: readonly Detector[] = [
+  {
+    // Views, matviews, partitioned tables, foreign tables — one relkind sweep.
+    label: 'relation',
+    sql: `SELECT CASE c.relkind
+                   WHEN 'v' THEN 'view'
+                   WHEN 'm' THEN 'materialized view'
+                   WHEN 'p' THEN 'partitioned table'
+                   WHEN 'f' THEN 'foreign table'
+                 END AS kind,
+                 n.nspname || '.' || c.relname AS name
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relkind IN ('v', 'm', 'p', 'f') AND ${SYS}`,
+  },
+  {
+    // Domains (typrelid = 0) and standalone composites (their pg_class entry is
+    // relkind 'c'). Excludes the implicit row type every table/view/sequence
+    // gets, which is a composite in pg_type but not a user-declared one.
+    label: 'type',
+    sql: `SELECT CASE t.typtype WHEN 'd' THEN 'domain' ELSE 'composite type' END AS kind,
+                 n.nspname || '.' || t.typname AS name
+            FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+           WHERE t.typtype IN ('d', 'c') AND ${SYS}
+             AND (t.typrelid = 0
+                  OR EXISTS (SELECT 1 FROM pg_class c
+                              WHERE c.oid = t.typrelid AND c.relkind = 'c'))`,
+  },
+  {
+    label: 'function',
+    sql: `SELECT n.nspname || '.' || p.proname AS name
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE ${SYS}`,
+  },
+  {
+    label: 'trigger',
+    sql: `SELECT n.nspname || '.' || c.relname || '.' || t.tgname AS name
+            FROM pg_trigger t
+            JOIN pg_class c ON c.oid = t.tgrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE NOT t.tgisinternal AND ${SYS}`,
+  },
+  {
+    label: 'policy',
+    sql: `SELECT n.nspname || '.' || c.relname || '.' || pol.polname AS name
+            FROM pg_policy pol
+            JOIN pg_class c ON c.oid = pol.polrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE ${SYS}`,
+  },
+  {
+    // A view's implicit _RETURN rule is the view itself, already reported above.
+    label: 'rule',
+    sql: `SELECT n.nspname || '.' || c.relname || '.' || r.rulename AS name
+            FROM pg_rewrite r
+            JOIN pg_class c ON c.oid = r.ev_class
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE r.rulename <> '_RETURN' AND ${SYS}`,
+  },
+  {
+    label: 'operator class',
+    sql: `SELECT n.nspname || '.' || o.opcname AS name
+            FROM pg_opclass o JOIN pg_namespace n ON n.oid = o.opcnamespace
+           WHERE ${SYS}`,
+  },
+  {
+    label: 'collation',
+    sql: `SELECT n.nspname || '.' || col.collname AS name
+            FROM pg_collation col JOIN pg_namespace n ON n.oid = col.collnamespace
+           WHERE ${SYS}`,
+  },
+  {
+    // Comments on user relations and their columns. pg_description also carries
+    // the built-in catalog's own docs, hence the join through pg_class.
+    label: 'comment',
+    sql: `SELECT n.nspname || '.' || c.relname AS name
+            FROM pg_description d
+            JOIN pg_class c ON c.oid = d.objoid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE ${SYS}
+           GROUP BY n.nspname, c.relname`,
+  },
+  {
+    // A relation with no explicit grants has relacl NULL; anything else means
+    // privileges were granted and would be lost.
+    label: 'grant',
+    sql: `SELECT n.nspname || '.' || c.relname AS name
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relacl IS NOT NULL AND ${SYS}`,
+  },
+  {
+    // plpgsql ships with every database; it is not something the source added.
+    label: 'extension',
+    sql: `SELECT e.extname AS name FROM pg_extension e WHERE e.extname <> 'plpgsql'`,
+  },
+];
+
+/**
+ * Detect out-of-scope objects so they can be reported rather than dropped.
+ *
+ * Runs before any DDL, which is what lets `onUnsupported: 'error'` refuse with
+ * the target still untouched (FR-9.6).
+ */
 async function detectUnsupported(source: PGliteLike): Promise<UnsupportedObject[]> {
   const found: UnsupportedObject[] = [];
-
-  const relkinds: Record<string, string> = { v: 'view', m: 'materialized view', p: 'partitioned table' };
-  const { rows: rels } = await source.query<{ schema: string; name: string; kind: string }>(
-    `SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
-       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind IN ('v', 'm', 'p') AND ${SYS}`,
-  );
-  for (const r of rels) found.push({ kind: relkinds[r.kind] ?? 'relation', name: `${r.schema}.${r.name}` });
-
-  const { rows: funcs } = await source.query<{ schema: string; name: string }>(
-    `SELECT n.nspname AS schema, p.proname AS name
-       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE ${SYS}`,
-  );
-  for (const r of funcs) found.push({ kind: 'function', name: `${r.schema}.${r.name}` });
-
-  const { rows: trigs } = await source.query<{ schema: string; table: string; name: string }>(
-    `SELECT n.nspname AS schema, c.relname AS table, t.tgname AS name
-       FROM pg_trigger t
-       JOIN pg_class c ON c.oid = t.tgrelid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE NOT t.tgisinternal AND ${SYS}`,
-  );
-  for (const r of trigs) found.push({ kind: 'trigger', name: `${r.schema}.${r.table}.${r.name}` });
-
-  const { rows: policies } = await source.query<{ schema: string; table: string; name: string }>(
-    `SELECT n.nspname AS schema, c.relname AS table, pol.polname AS name
-       FROM pg_policy pol
-       JOIN pg_class c ON c.oid = pol.polrelid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE ${SYS}`,
-  );
-  for (const r of policies) found.push({ kind: 'policy', name: `${r.schema}.${r.table}.${r.name}` });
-
+  for (const detector of DETECTORS) {
+    const { rows } = await source.query<{ kind?: string | null; name: string }>(detector.sql);
+    for (const r of rows) {
+      found.push({ kind: r.kind ?? detector.label, name: r.name });
+    }
+  }
   return found;
 }

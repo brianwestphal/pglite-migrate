@@ -223,6 +223,44 @@ describe('run', () => {
     }
   }, 30_000);
 
+  it('stays quiet about per-table validation detail when everything matches', async () => {
+    const source = await seedDir('source', SCHEMA_SQL, SEED_SQL);
+    const target = await seedDir('target', SCHEMA_SQL);
+
+    const code = await run([source, target], io);
+    const errText = err.join('\n');
+
+    expect(code).toBe(0);
+    expect(errText).toContain('Validation (counts): OK.');
+    // A healthy run should not print a wall of per-table parity lines.
+    expect(errText).not.toMatch(/public\.authors: \d+ = \d+/);
+  }, 30_000);
+
+  it('prints the source-vs-target counts for every table when validation fails', async () => {
+    // Two independent tables (no FK, so the mismatch is purely a count one).
+    // `onExisting: skip` leaves the pre-populated `a` short of the source while
+    // `b` transfers cleanly — so one table fails validation and one passes, and
+    // the output has to show both.
+    const schema = `CREATE TABLE a (id int PRIMARY KEY, v text);
+                    CREATE TABLE b (id int PRIMARY KEY, v text);`;
+    const source = await seedDir(
+      'source',
+      schema,
+      `INSERT INTO a VALUES (1, 'x'), (2, 'y'); INSERT INTO b VALUES (1, 'p'), (2, 'q');`,
+    );
+    const target = await seedDir('target', schema, `INSERT INTO a VALUES (1, 'x')`);
+
+    const code = await run([source, target, '--on-existing', 'skip'], io);
+    const errText = err.join('\n');
+
+    expect(code).toBe(1);
+    expect(errText).toContain('Validation (counts): FAILED.');
+    // The numbers, which were previously only reachable from the library report.
+    expect(errText).toMatch(/public\.a: 2 ≠ 1/);
+    // Matching tables are printed too, so the operator sees the whole picture.
+    expect(errText).toMatch(/public\.b: 2 = 2/);
+  }, 30_000);
+
   it('exits non-zero and tolerates an unreadable PG_VERSION on error', async () => {
     const source = await seedDir('source', SCHEMA_SQL, SEED_SQL);
     // Fresh, never-initialized target dir: no schema -> first insert fails,

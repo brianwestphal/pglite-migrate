@@ -1,6 +1,8 @@
 import { cp, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
+import { exists, sanitizedTimestamp } from './fsutil.js';
+
 /** Options for {@link backupDataDir}. */
 export interface BackupOptions {
   /** Override the backup directory path. Default: `<dataDir>.bak-<timestamp>`. */
@@ -26,22 +28,14 @@ async function dirStats(dir: string): Promise<{ files: number; bytes: number }> 
       const sub = await dirStats(full);
       files += sub.files;
       bytes += sub.bytes;
+      /* v8 ignore next -- a PGDATA tree is plain files and dirs; anything else
+         (socket, FIFO, device) is counted by neither branch, deliberately */
     } else if (entry.isFile()) {
       files += 1;
       bytes += (await stat(full)).size;
     }
   }
   return { files, bytes };
-}
-
-/** True if a path exists. */
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -62,7 +56,7 @@ async function exists(path: string): Promise<boolean> {
  * @throws if the backup directory already exists or verification fails.
  */
 export async function backupDataDir(dataDir: string, options: BackupOptions = {}): Promise<string> {
-  const timestamp = (options.timestamp ?? new Date().toISOString()).replace(/:/g, '-');
+  const timestamp = sanitizedTimestamp(options.timestamp);
   const backupDir = options.backupDir ?? `${dataDir}.bak-${timestamp}`;
   const partial = `${backupDir}.partial`;
 

@@ -13,14 +13,15 @@ src/
   index.ts        Public API barrel — the only import surface for consumers
   types.ts        PGliteLike structural interface + all result/option types (SSOT for shapes)
   ident.ts        SQL identifier/literal quoting helpers
-  catalog.ts      Shared catalog-SQL building blocks: tableKey, systemSchemaFilter(alias), regclassLiteral, countRows
+  fsutil.ts       Shared filesystem/error building blocks (the catalog.ts of the fs side): exists, sanitizedTimestamp (NTFS-safe `:`→`-`, keeps ms), errorCode
+  catalog.ts      Shared catalog-SQL building blocks: tableKey, objectKey (schema.table.object), systemSchemaFilter(alias), regclassLiteral, countRows (bigint-safe via ::text), hasRows (bounded LIMIT 1 probe)
   introspect.ts   introspectSchema(db): tables, columns (+ generated/identity), FKs, sequences via catalog SQL
-  transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback), transferCycle, applySequences
-  migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report
+  transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback; names BOTH errors if the fallback also fails), transferCycle, applySequences
+  migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report. Report echoes onExisting + truncatedTables
   validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks; exports ValidationError (thrown by migrate when onValidationFailure: 'throw')
   backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
-  reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); onUnsupported 'error' throws before any DDL. GAPS: no CREATE SCHEMA pre-phase (multi-schema sources fail), bare CREATE SEQUENCE (params lost), no OWNED BY re-link, domain/composite types neither rebuilt nor reported — doc 9 § Known gaps
+  reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); schemas → enums → sequences(+params) → tables → OWNED BY → constraints → indexes; onUnsupported 'error' throws before any DDL. detectUnsupported is table-driven (DETECTORS) and covers every NG-9.10 class. GAP: warn mode still fails when a column uses a domain/composite (doc 9 OQ-9.5, pinned by a KNOWN LIMITATION test)
   loader.ts       openDataDir(dir, modulePath, options): open a data dir with a chosen PGlite package/alias; resolve-first, then optional acquisition; absolute paths go through pathToFileURL
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster; readEngineMajor(db): ask a running engine which major it IS
   precheck.ts     assertEngineMatchesDataDir(db, {dataDir, expectedMajor, side, engine}): fail early when an engine can't serve the dir; exports EngineMismatchError. expectedMajor must be the PRE-open PG_VERSION (a fresh dir is initialized at the engine's own major, so a post-open read is vacuous); null skips without querying
@@ -29,15 +30,15 @@ src/
     registry.ts   Pinned Postgres-major → PGlite version + sha512 table; resolveEngine / knownMajors / UnknownMajorError
     acquire.ts    acquireEngine(major) / acquireRelease(release): download → verify pinned hash → extract → resolveEntry; cache 'keep' (default) | 'ephemeral'
     tar.ts        extractTarGz: hand-rolled, zero-dep, security-hardened (refuses links/devices/traversal/bad checksums; ignores archive modes)
-  cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run
+  cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run. reportValidation prints per-table/per-sequence detail on failure only
 tests/
-  topo / version / ident / catalog .test.ts   Pure unit tests (catalog: tableKey/systemSchemaFilter/regclassLiteral + countRows)
+  topo / version / ident / catalog / fsutil .test.ts   Pure unit tests (catalog: tableKey/objectKey/systemSchemaFilter/regclassLiteral + countRows/hasRows; fsutil: exists/sanitizedTimestamp/errorCode)
   introspect(.edge).test.ts              Introspection (basic + edge: multi-schema, dropped/qualified FK/composite, generated/identity, type qualifiers)
-  transfer.test.ts                       transferTable (COPY + INSERT fallback + generated exclusion), applySequences
-  migrate.test.ts                        Orchestrator: totals, FK ordering, cycle handling, validation, onExisting re-run safety, dry-run
+  transfer.test.ts                       transferTable (COPY + INSERT fallback + generated exclusion + both-paths-fail error), applySequences, transferCycle failure/retry + fallback-inside-cycle
+  migrate.test.ts                        Orchestrator: totals, FK ordering, cycle handling, validation, onExisting re-run safety (incl. a PARTIALLY-populated target: mixed skip-some/fill-others + FK integrity), dry-run
   validate.test.ts                       counts / full-digest / sequence checks
-  backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked)
-  reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting
+  backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch, no-PG_VERSION dir); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked) + SEQUENTIAL swaps (swap→swap, same-second collision, retry-after-restore, keepOld:false→swap)
+  reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting + audit regressions (multi-schema, sequence params, OWNED BY, domain/composite detection)
   loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle); parseArgs + run() over real temp dirs (incl. engine/dir major mismatch)
   precheck.test.ts                       readEngineMajor + assertEngineMatchesDataDir: match, mismatch, unpinned major, no-PG_VERSION skip (asserts NO query is issued), refusing engine
   engines/registry.test.ts               Pinned table: lookup, unknown major, one-release-per-major, `15devel` parse
@@ -60,6 +61,7 @@ docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 - `planMigration(source, onProgress?)` → `MigrationReport` — dry-run plan (writes nothing)
 - `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target, options?)`
 - `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
+- `MigrationReport` now also carries `onExisting` (resolved policy) and `truncatedTables` (destructive re-run record); `ReconstructionReport` carries `schemas`
 - `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
 - `openDataDir(dir, modulePath?, options?)`, `readClusterVersion(dataDir)`, `readEngineMajor(db)`
 - `assertEngineMatchesDataDir(db, options)` + `EngineMismatchError` — engine/data-directory major precheck

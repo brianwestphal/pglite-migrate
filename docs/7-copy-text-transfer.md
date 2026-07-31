@@ -74,6 +74,10 @@ Probed against both aliases (`pglite-old` = PG17 / `pglite-new` = PG18; the spik
 ### Fallback
 
 - **FR-7.11 Per-table fallback to INSERT.** If COPY is unsupported for a given table (e.g. the spike reveals an engine, version, or type combination where COPY fails), the transfer falls back to the existing row-by-row `INSERT` path for **that table** and records a warning in `MigrationReport.warnings` naming the table and reason. Fallback is per-table, not global, so one unsupported table does not force every table back onto the slow path.
+
+  > **Verified to hold inside FK cycles too** (PGLM-84). It was suspected that `transferCycle`'s explicit transaction would defeat the fallback, since any SQL error inside a transaction aborts it. It does not, for the case this requirement is about: an engine that does not *support* COPY rejects it client-side, which never reaches the server and so never aborts the transaction — the fallback runs and the cycle commits normally. There is a regression test for exactly this.
+  >
+  > What the transaction *does* defeat is a COPY that fails **server-side** while inside the cycle: that aborts the transaction, the fallback's own statements then fail with a bare `current transaction is aborted`, and `transferCycle` rolls back and rethrows. No data is corrupted (the whole subset rolls back, per FR-8.8 and doc 8), but the surfaced error used to name neither the real cause nor the table. `transferTable` now catches the both-paths-failed case and throws an error naming **both** the COPY failure and the fallback failure, with the latter retained as `cause`. That also improves the acyclic case, where the fallback's error could equally mask the original.
 - **FR-7.12 INSERT path is retained, not deleted.** The current `INSERT` implementation remains in the codebase as the fallback (`FR-7.11`) and as the path for environments where COPY is unavailable. COPY-text **augments** the transfer; it does not remove the existing behavior.
 
 ### Non-functional / non-goals

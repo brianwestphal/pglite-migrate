@@ -1,4 +1,4 @@
-import { countRows, tableKey } from './catalog.js';
+import { countRows, hasRows, tableKey } from './catalog.js';
 import { quoteQualified } from './ident.js';
 import { introspectSchema } from './introspect.js';
 import { reconstructSchema } from './reconstruct.js';
@@ -21,35 +21,53 @@ async function rowCount(db: PGliteLike, table: TableInfo): Promise<number> {
   return countRows(db, quoteQualified(table.schema, table.name));
 }
 
+/** What the re-run-safety pass decided, for the transfer loop and the report. */
+interface TargetPreparation {
+  /** Table keys to leave untouched (`onExisting: 'skip'`). */
+  skip: Set<string>;
+  /** Table keys that held rows and were emptied (`onExisting: 'truncate'`). */
+  truncated: string[];
+}
+
 /**
- * Apply the re-run-safety policy to the target before transferring, returning
- * the set of table keys to skip. `error` refuses on any populated table;
- * `truncate` empties all target tables (FK-safe, in one statement); `skip`
+ * Apply the re-run-safety policy to the target before transferring.
+ *
+ * `error` refuses on any populated table; `truncate` empties all target tables
+ * (FK-safe, in one statement) and reports which ones actually held rows; `skip`
  * marks already-populated tables to leave untouched.
+ *
+ * The populated-table probe runs for every mode — including `truncate`, which
+ * used to short-circuit past it — so the report can say what was destroyed. It
+ * is a bounded `LIMIT 1` existence check rather than a count, which is what
+ * makes probing on the truncate path cheap enough to be unconditional.
  */
 async function prepareTarget(
   target: PGliteLike,
   ordered: TableInfo[],
   onExisting: OnExisting,
-): Promise<Set<string>> {
+): Promise<TargetPreparation> {
   const skip = new Set<string>();
-  if (ordered.length === 0) return skip;
-
-  if (onExisting === 'truncate') {
-    // Truncating every table in one statement handles mutual FKs atomically.
-    const list = ordered.map((t) => quoteQualified(t.schema, t.name)).join(', ');
-    await target.exec(`TRUNCATE TABLE ${list}`);
-    return skip;
-  }
+  if (ordered.length === 0) return { skip, truncated: [] };
 
   const populated: string[] = [];
   for (const t of ordered) {
-    if ((await rowCount(target, t)) > 0) populated.push(tableKey(t));
+    if (await hasRows(target, quoteQualified(t.schema, t.name))) populated.push(tableKey(t));
   }
+
+  if (onExisting === 'truncate') {
+    // Truncating every table in one statement handles mutual FKs atomically:
+    // a multi-table TRUNCATE defers the FK check across the whole listed set,
+    // so no reverse-topological ordering is needed and cycles are covered too.
+    const list = ordered.map((t) => quoteQualified(t.schema, t.name)).join(', ');
+    await target.exec(`TRUNCATE TABLE ${list}`);
+    return { skip, truncated: populated };
+  }
+
   if (onExisting === 'skip') {
     for (const key of populated) skip.add(key);
-    return skip;
+    return { skip, truncated: [] };
   }
+
   // onExisting === 'error'
   if (populated.length > 0) {
     throw new Error(
@@ -57,7 +75,7 @@ async function prepareTarget(
         `Re-run with onExisting: 'truncate' or 'skip', or start from an empty target.`,
     );
   }
-  return skip;
+  return { skip, truncated: [] };
 }
 
 /** Synthesize a warning when a table fell back from COPY to row-by-row INSERT. */
@@ -102,6 +120,11 @@ export async function planMigration(
     warnings: [],
     deferredTables: [...cycles],
     skippedTables: [],
+    // A plan writes nothing, so no table is skipped or truncated. `onExisting`
+    // is echoed by `migrate` for a dry run so the preview names the policy the
+    // real run would apply.
+    onExisting: 'error',
+    truncatedTables: [],
   };
 }
 
@@ -120,10 +143,12 @@ export async function planMigration(
  */
 export async function migrate(options: MigrateOptions): Promise<MigrationReport> {
   const { source, target, onProgress } = options;
-  if (options.dryRun === true) return planMigration(source, onProgress);
+  const onExisting = options.onExisting ?? 'error';
+  if (options.dryRun === true) {
+    return { ...(await planMigration(source, onProgress)), onExisting };
+  }
 
   const level = options.validate ?? 'counts';
-  const onExisting = options.onExisting ?? 'error';
   const onValidationFailure = options.onValidationFailure ?? 'report';
   const warnings: string[] = [];
 
@@ -143,7 +168,7 @@ export async function migrate(options: MigrateOptions): Promise<MigrationReport>
   const { ordered, cycles } = topologicalSort(schema.tables, schema.foreignKeys);
   const cyclicSet = new Set(cycles);
 
-  const skip = await prepareTarget(target, ordered, onExisting);
+  const { skip, truncated } = await prepareTarget(target, ordered, onExisting);
   const skippedTables = [...skip];
 
   const tables: TableResult[] = [];
@@ -200,6 +225,8 @@ export async function migrate(options: MigrateOptions): Promise<MigrationReport>
     warnings,
     deferredTables,
     skippedTables,
+    onExisting,
+    truncatedTables: truncated,
     validation,
     reconstruction,
   };

@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
+import { exists } from '../fsutil.js';
 import type { EngineCacheMode, EngineRelease } from '../types.js';
 import { PGLITE_PACKAGE, resolveEngine } from './registry.js';
 import { extractTarGz } from './tar.js';
@@ -62,16 +63,6 @@ export class IntegrityError extends Error {
         `This means the bytes served did not match the hash pinned in this build of pglite-migrate.`,
     );
     this.name = 'IntegrityError';
-  }
-}
-
-/** True if a path exists. */
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

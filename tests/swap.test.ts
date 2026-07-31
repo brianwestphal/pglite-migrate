@@ -177,3 +177,118 @@ describe('swapIntoPlace', () => {
     expect(await readMarker(canonical)).toBe('old');
   });
 });
+
+/**
+ * Every case above starts from a fresh fixture. These drive `swapIntoPlace`
+ * more than once against the same canonical location — the state only a prior
+ * swap can produce (PGLM-90).
+ */
+describe('swapIntoPlace (sequential swaps)', () => {
+  let dir: string;
+  let canonical: string;
+  let realRename: typeof fsp.rename;
+
+  beforeAll(async () => {
+    const actual = await vi.importActual<typeof fsp>('node:fs/promises');
+    realRename = actual.rename;
+  });
+
+  beforeEach(async () => {
+    vi.mocked(fsp.rename).mockImplementation(realRename);
+    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-swapseq-'));
+    canonical = join(dir, 'pgdata');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** Stage a fresh cluster at `<canonical>.new-<tag>` carrying `marker`. */
+  async function stage(tag: string, marker: string): Promise<string> {
+    const path = `${canonical}.new-${tag}`;
+    await makeCluster(path, marker);
+    return path;
+  }
+
+  it('swaps twice, retaining both displaced clusters independently', async () => {
+    await makeCluster(canonical, 'v1');
+
+    const first = await swapIntoPlace(canonical, await stage('a', 'v2'), {
+      timestamp: '2026-06-16T12:00:00.000Z',
+    });
+    const second = await swapIntoPlace(canonical, await stage('b', 'v3'), {
+      timestamp: '2026-06-17T12:00:00.000Z',
+    });
+
+    // Canonical holds the newest cluster.
+    expect(await readMarker(canonical)).toBe('v3');
+    // Both retained originals survive, each holding what it displaced. The
+    // second swap must not clobber the first's rollback artifact.
+    expect(first.previous).not.toBeNull();
+    expect(second.previous).not.toBeNull();
+    expect(await readMarker(first.previous as string)).toBe('v1');
+    expect(await readMarker(second.previous as string)).toBe('v2');
+  });
+
+  it('refuses a second swap that lands on the same retained-old name', async () => {
+    await makeCluster(canonical, 'v1');
+    const sameSecond = '2026-06-16T12:00:00.000Z';
+
+    await swapIntoPlace(canonical, await stage('a', 'v2'), { timestamp: sameSecond });
+    const staged = await stage('b', 'v3');
+
+    // Two swaps deriving the same `.old-<ts>` is the collision the guard exists
+    // for; this reaches it the way a real run would, rather than by
+    // pre-creating the directory.
+    await expect(
+      swapIntoPlace(canonical, staged, { timestamp: sameSecond }),
+    ).rejects.toThrow(/Retained-old directory already exists/);
+
+    // The first swap's result is intact and the second's staging is untouched.
+    expect(await readMarker(canonical)).toBe('v2');
+    expect(await readMarker(staged)).toBe('v3');
+  });
+
+  it('completes a retry after a failed swap restored the canonical cluster', async () => {
+    await makeCluster(canonical, 'v1');
+    const staged = await stage('a', 'v2');
+
+    vi.mocked(fsp.rename).mockImplementation(async (src, dest) => {
+      if (src === staged) throw Object.assign(new Error('transient'), { code: 'EIO' });
+      return realRename(src, dest);
+    });
+    await expect(
+      swapIntoPlace(canonical, staged, { timestamp: '2026-06-16T12:00:00.000Z' }),
+    ).rejects.toThrow(/transient/);
+    expect(await readMarker(canonical)).toBe('v1'); // restored
+
+    // The retry runs against a canonical that was moved aside and back again.
+    vi.mocked(fsp.rename).mockImplementation(realRename);
+    const result = await swapIntoPlace(canonical, staged, {
+      timestamp: '2026-06-17T12:00:00.000Z',
+    });
+
+    expect(await readMarker(canonical)).toBe('v2');
+    expect(await readMarker(result.previous as string)).toBe('v1');
+  });
+
+  it('swaps again cleanly after keepOld:false left no retained sibling', async () => {
+    await makeCluster(canonical, 'v1');
+
+    const first = await swapIntoPlace(canonical, await stage('a', 'v2'), {
+      keepOld: false,
+      timestamp: '2026-06-16T12:00:00.000Z',
+    });
+    expect(first.previous).toBeNull();
+    expect(await exists(`${canonical}.old-2026-06-16T12-00-00.000Z`)).toBe(false);
+
+    // Second swap sees a canonical with no `.old` sibling — distinct from both
+    // the fresh case and the retained case.
+    const second = await swapIntoPlace(canonical, await stage('b', 'v3'), {
+      timestamp: '2026-06-17T12:00:00.000Z',
+    });
+
+    expect(await readMarker(canonical)).toBe('v3');
+    expect(await readMarker(second.previous as string)).toBe('v2');
+  });
+});

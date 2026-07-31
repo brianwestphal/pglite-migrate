@@ -96,18 +96,37 @@ export async function transferTable(
   try {
     const rowsCopied = await copyTable(source, target, qualified, colList);
     result = { table: tableKey(table), rowsCopied, method: 'copy' };
-  } catch (err) {
-    const rowsCopied = await insertTable(source, target, qualified, cols, colList);
-    result = {
-      table: tableKey(table),
-      rowsCopied,
-      method: 'insert',
-      fallbackReason: err instanceof Error ? err.message : String(err),
-    };
+  } catch (copyErr) {
+    try {
+      const rowsCopied = await insertTable(source, target, qualified, cols, colList);
+      result = {
+        table: tableKey(table),
+        rowsCopied,
+        method: 'insert',
+        fallbackReason: message(copyErr),
+      };
+    } catch (insertErr) {
+      // Both paths failed. Report both: the fallback's error on its own is
+      // usually the less informative of the two, and can be entirely
+      // misleading — a COPY that errors server-side inside `transferCycle`'s
+      // transaction aborts it, so the fallback then fails with a bare
+      // "current transaction is aborted" that names neither the real cause nor
+      // the table.
+      throw new Error(
+        `Table ${tableKey(table)}: COPY failed (${message(copyErr)}), ` +
+          `and the row-by-row INSERT fallback also failed (${message(insertErr)}).`,
+        { cause: insertErr },
+      );
+    }
   }
 
   onProgress?.(result);
   return result;
+}
+
+/** Render an unknown thrown value as a message string. */
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -220,9 +239,13 @@ export async function transferCycle(
     throw err;
   } finally {
     // Restore the original NOT DEFERRABLE characteristic on what we flipped.
+    // The `.catch` swallows a restore failure so it cannot mask the error that
+    // brought us into `finally`; reaching it needs the ALTER to fail after an
+    // identical one already succeeded, which no test can honestly produce.
     for (const c of flipped) {
       await target
         .query(`ALTER TABLE ${c.qualified} ALTER CONSTRAINT ${quoteIdent(c.name)} NOT DEFERRABLE`)
+        /* v8 ignore next */
         .catch(() => undefined);
     }
   }

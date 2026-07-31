@@ -1,19 +1,26 @@
 # 9 — Standalone Schema Reconstruction (Detailed Spec)
 
-**Status: Implemented (PGLM-25; spike PGLM-24), with four verified gaps — see [Known gaps](#known-gaps-in-the-shipped-implementation).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
+**Status: Implemented (PGLM-25; spike PGLM-24). The four gaps found by the PGLM-74 audit are fixed (PGLM-76…80); one scope decision remains open — see [Known gaps](#known-gaps-in-the-shipped-implementation).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
 
 ## Known gaps in the shipped implementation
 
-Each was reproduced against a real in-memory PGlite pair, not inferred from reading, and each has a follow-up ticket.
+### Fixed (PGLM-76…80)
 
-| Gap | Requirement | Observed behavior |
+Each of these reproduced a real failure against an in-memory PGlite pair before the fix, and each now has a regression test in `tests/reconstruct.test.ts` § "audit regressions".
+
+| Gap | Requirement | Fix |
 | --- | --- | --- |
-| **Non-`public` schemas are never created on the target.** `reconstructEnums`/`reconstructTables` emit `CREATE … "app"."t"` without a preceding `CREATE SCHEMA`. | OQ-9.6 (recommended a `CREATE SCHEMA IF NOT EXISTS` pre-phase), NFR-9.9 | A source with `CREATE SCHEMA app; CREATE TABLE app.t (…)` fails with `schema "app" does not exist`. Standalone mode only works for single-schema (`public`) sources today, while `introspectSchema` deliberately covers every non-system schema. |
-| **Sequence parameters are dropped.** `reconstructSequences` emits a bare `CREATE SEQUENCE IF NOT EXISTS <name>`. | FR-9.5 | A source `CREATE SEQUENCE s1 START 100 INCREMENT 5 MAXVALUE 900 CYCLE` reconstructs as increment `1`, max `9223372036854775807`, start `1`, `cycle false`. Silent behavior change — a cycling sequence stops cycling and a strided one stops striding. `applySequences` later sets `last_value`, which masks it for the common serial case. |
-| **`OWNED BY` is never re-established.** | FR-9.5 | After reconstructing `CREATE TABLE u (id serial primary key, …)`, `pg_get_serial_sequence('u','id')` on the target returns `NULL`. The column default `nextval(…)` is correct, so inserts work, but the sequence is orphaned: dropping the table leaves it behind, and any tooling that resolves a column's sequence through `pg_get_serial_sequence` breaks. |
-| **Domain and composite types are neither reconstructed nor reported.** `reconstructEnums` covers `pg_enum` only; `detectUnsupported` does not look at `pg_type` for `typtype` `d`/`c`. | FR-9.4, FR-9.6 | A source with `CREATE DOMAIN posint AS integer CHECK (VALUE > 0)` and a column of that type fails mid-reconstruction with `type "posint" does not exist` — after enums and sequences have already been created on the target. FR-9.6's "never silently drop" contract is met only in the sense that it is loud; it is not *detected and reported*, and the target is left partially built. |
+| Non-`public` schemas were never created on the target, so a multi-schema source died with `schema "app" does not exist`. | OQ-9.6, NFR-9.9 | `reconstructSchemas` runs first and emits `CREATE SCHEMA IF NOT EXISTS` for every non-system, non-`public` schema. Reported as `ReconstructionReport.schemas`. |
+| `CREATE SEQUENCE` was emitted bare, losing start/increment/min/max/cycle. | FR-9.5 | `reconstructSequences` reads `pg_sequence` and emits `AS <type> INCREMENT BY … MINVALUE … MAXVALUE … START WITH … [NO] CYCLE`. Bounds are validated as integers before being spliced (they are literals, not identifiers, so `src/ident.ts` does not apply). |
+| `OWNED BY` was never re-established, orphaning a `serial` column's sequence. | FR-9.5 | `reconstructSequenceOwnership` replays `pg_depend` deptype `'a'` links as `ALTER SEQUENCE … OWNED BY`, after tables exist. Identity columns are unaffected — their sequence is implicit. |
+| Domains and composite types were neither reconstructed nor reported, so reconstruction died mid-run leaving a partially-built target and bypassing `onUnsupported: 'error'`. | FR-9.6 | `detectUnsupported` now inspects `pg_type` for `typtype IN ('d','c')`, excluding the implicit row type every table/view/sequence carries. `error` mode refuses with the target at **zero** objects. |
+| `detectUnsupported` covered 6 of the ~13 classes NG-9.10 enumerates. | FR-9.6 | Now table-driven (`DETECTORS`) and covers all of them: views, materialized views, partitioned **and foreign** tables, domains, composite types, functions, triggers, policies, rules, operator classes, collations, comments, grants, and extensions. A view's implicit `_RETURN` rule and row type are not double-reported; `plpgsql` is not reported as a source-added extension. |
 
-Separately, `detectUnsupported` covers views, materialized views, partitioned tables, functions, triggers, and RLS policies — but **not** the remaining classes NG-9.10 enumerates: operator classes, non-default collations, comments, grants/ownership, extensions, foreign tables, and rules. Those are silently absent from the report.
+### Still open — OQ-9.5, reconstructing domains and composites
+
+Detection is complete, so `onUnsupported: 'error'` is now correct for every class. But under the default `warn`, a source whose **column uses** a domain still fails with `type "posint" does not exist`, because `format_type` renders the column's type faithfully and the type was never created.
+
+That is the unresolved half of **FR-9.4** ("composite/domain types if trivially emittable") and **OQ-9.5**. It is a scope decision, not a defect: emitting domains is cheap (`pg_type` + `pg_constraint`), composites less so, and either way they would have to be removed from the unsupported list rather than reported *and* rebuilt. The current behavior is pinned by an explicit `KNOWN LIMITATION` test so the gap is executable rather than folklore. Tracked as its own ticket.
 
 ## Motivation / Problem
 
@@ -100,7 +107,7 @@ Each detected object becomes an `UnsupportedObject { kind, name }` entry (where 
 
 ### Report shape
 
-`ReconstructionReport` (declared in `src/types.ts`, the SSOT for shapes) carries `enums`, `sequences`, `tables`, `constraints`, and `indexes` — each a `string[]` of the created objects' qualified names — plus `unsupported: UnsupportedObject[]`. It composes into `MigrationReport.reconstruction`; additionally, `migrate` folds each unsupported object into `MigrationReport.warnings` as an `Unsupported <kind> not reconstructed: <name>.` line so warn-mode operators see it in the standard warning stream.
+`ReconstructionReport` (declared in `src/types.ts`, the SSOT for shapes) carries `schemas`, `enums`, `sequences`, `tables`, `constraints`, and `indexes` — each a `string[]` of the created objects' qualified names — plus `unsupported: UnsupportedObject[]`. It composes into `MigrationReport.reconstruction`; additionally, `migrate` folds each unsupported object into `MigrationReport.warnings` as an `Unsupported <kind> not reconstructed: <name>.` line so warn-mode operators see it in the standard warning stream.
 
 ## Interaction with existing code
 

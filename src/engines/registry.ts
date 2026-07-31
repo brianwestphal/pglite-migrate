@@ -84,7 +84,19 @@ export function knownMajors(): number[] {
  * @throws {@link UnknownMajorError} when no release is pinned for `major`.
  */
 export function resolveEngine(major: number): EngineRelease {
-  const release = RELEASES.find((r) => r.postgresMajor === major);
+  const release = tryResolveEngine(major);
   if (release === undefined) throw new UnknownMajorError(major, knownMajors());
   return release;
+}
+
+/**
+ * Look up the pinned release for a major, or `undefined` when none is pinned.
+ *
+ * The non-throwing sibling of {@link resolveEngine}, for the callers that only
+ * want to *name* a remedy in an error message. Not finding a pin is not itself a
+ * failure there — it just means the message cannot suggest an install command —
+ * and encoding that policy once keeps the two diagnostics consistent.
+ */
+export function tryResolveEngine(major: number): EngineRelease | undefined {
+  return RELEASES.find((r) => r.postgresMajor === major);
 }

@@ -370,3 +370,102 @@ describe('transferCycle (failure-then-rollback)', () => {
     expect(await fkDeferrable()).toEqual([false, false]);
   });
 });
+
+/**
+ * What happens when COPY fails *and* the INSERT fallback cannot rescue it.
+ *
+ * The FR-7.11 per-table fallback is genuinely per-table and works inside a
+ * cyclic transfer too — verified below. The failure mode worth guarding is
+ * narrower: a COPY that errors *server-side* inside `transferCycle`'s explicit
+ * transaction aborts it, so the fallback then fails with a bare "current
+ * transaction is aborted" naming neither the real cause nor the table (PGLM-84).
+ */
+describe('transferTable (COPY and fallback both failing)', () => {
+  let source: PGlite;
+  let target: PGlite;
+
+  const DDL = `CREATE TABLE t (id integer PRIMARY KEY, v text)`;
+  const table: TableInfo = {
+    schema: 'public',
+    name: 't',
+    columns: [
+      { name: 'id', type: 'integer' },
+      { name: 'v', type: 'text' },
+    ],
+  };
+
+  beforeEach(async () => {
+    source = freshDb();
+    target = freshDb();
+    await source.exec(DDL);
+    await target.exec(DDL);
+    await source.exec(`INSERT INTO t VALUES (1, 'a'), (2, 'b')`);
+  });
+
+  afterEach(async () => {
+    await source.close();
+    await target.close();
+  });
+
+  it('names both the COPY failure and the fallback failure', async () => {
+    // COPY is rejected, and the INSERT fallback hits a real constraint error.
+    await target.exec(`INSERT INTO t VALUES (1, 'pre-existing')`);
+    const failing: PGliteLike = {
+      query: <R = Record<string, unknown>>(q: string, params?: unknown[], options?: QueryOptions) =>
+        /^\s*COPY .* FROM/i.test(q)
+          ? Promise.reject(new Error('COPY unsupported here'))
+          : target.query<R>(q, params, options),
+      exec: (q: string) => target.exec(q),
+    };
+
+    const error = await transferTable(source, failing, table).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    // Both causes, and the table, are named — previously only the fallback's
+    // error escaped, which is the less informative of the two.
+    expect(message).toContain('public.t');
+    expect(message).toContain('COPY unsupported here');
+    expect(message).toMatch(/duplicate key|already exists|unique/i);
+    // The fallback's own error is retained as the cause for programmatic use.
+    expect((error as Error).cause).toBeInstanceOf(Error);
+  });
+
+  it('still falls back per-table inside a cyclic transfer when COPY is unavailable', async () => {
+    // The FR-7.11 guarantee holds inside transferCycle: a client-side "COPY not
+    // supported" does not touch the transaction, so the INSERT fallback runs and
+    // the cycle commits.
+    const cyclicDdl = `
+      CREATE TABLE ca (id integer PRIMARY KEY, b_id integer);
+      CREATE TABLE cb (id integer PRIMARY KEY, a_id integer);
+      ALTER TABLE ca ADD CONSTRAINT ca_fk FOREIGN KEY (b_id) REFERENCES cb(id);
+      ALTER TABLE cb ADD CONSTRAINT cb_fk FOREIGN KEY (a_id) REFERENCES ca(id);
+    `;
+    await source.exec(cyclicDdl);
+    await target.exec(cyclicDdl);
+    await source.exec(
+      `INSERT INTO ca VALUES (1, NULL); INSERT INTO cb VALUES (1, 1); UPDATE ca SET b_id = 1;`,
+    );
+    const cols = (name: string, ref: string): TableInfo => ({
+      schema: 'public',
+      name,
+      columns: [
+        { name: 'id', type: 'integer' },
+        { name: ref, type: 'integer' },
+      ],
+    });
+    const noCopy: PGliteLike = {
+      query: <R = Record<string, unknown>>(q: string, params?: unknown[], options?: QueryOptions) =>
+        /^\s*COPY .* FROM/i.test(q)
+          ? Promise.reject(new Error('COPY unsupported here'))
+          : target.query<R>(q, params, options),
+      exec: (q: string) => target.exec(q),
+    };
+
+    const results = await transferCycle(source, noCopy, [cols('ca', 'b_id'), cols('cb', 'a_id')]);
+
+    expect(results.map((r) => r.method)).toEqual(['insert', 'insert']);
+    const { rows } = await target.query<{ n: string }>(`SELECT count(*)::text AS n FROM ca`);
+    expect(rows[0].n).toBe('1');
+  });
+});

@@ -1,7 +1,8 @@
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { resolveEngine } from './engines/registry.js';
+import { tryResolveEngine } from './engines/registry.js';
+import { errorCode } from './fsutil.js';
 import type { EngineCacheMode, EngineRelease, PGliteLike } from './types.js';
 import { readClusterVersion } from './version.js';
 
@@ -60,9 +61,9 @@ const UNRESOLVED_CODES = new Set([
  * downloading a replacement for it would bury the real error.
  */
 function isUnresolvedModule(err: unknown, specifier: string): boolean {
-  if (!(err instanceof Error) || !('code' in err)) return false;
-  const code = (err as { code?: unknown }).code;
-  if (typeof code !== 'string' || !UNRESOLVED_CODES.has(code)) return false;
+  if (!(err instanceof Error)) return false;
+  const code = errorCode(err);
+  if (code === undefined || !UNRESOLVED_CODES.has(code)) return false;
   return err.message.includes(specifier);
 }
 
@@ -96,12 +97,7 @@ async function missingEngineError(
   const lines = [`Could not load the PGlite engine "${modulePath}".`];
   if (major !== null) {
     lines.push(`${dataDir} is a PostgreSQL ${major.toString()} data directory.`);
-    let pinned: string | null;
-    try {
-      pinned = resolveEngine(major).version;
-    } catch {
-      pinned = null;
-    }
+    const pinned = tryResolveEngine(major)?.version ?? null;
     if (pinned !== null) {
       lines.push(
         `Install a matching engine:`,

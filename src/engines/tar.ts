@@ -192,6 +192,13 @@ export async function extractTarGz(
         if (rel === null) continue;
         const full = resolve(root, rel);
         // Belt and braces: even with the name checks above, never write outside.
+        // Unreachable in practice — `safeEntryPath` already rejects absolute
+        // paths, traversal, backslashes and NUL bytes, so nothing that survives
+        // it can resolve outside `root`. Kept as a second, independent gate on
+        // the one operation that actually writes; deliberately not covered,
+        // since reaching it would mean bypassing `safeEntryPath` in a test and
+        // asserting nothing about real archives.
+        /* v8 ignore next 3 */
         if (full !== root && !full.startsWith(root + sep)) {
           throw new TarError(`Tar entry escapes extraction root: ${rawName}`);
         }
@@ -204,6 +211,7 @@ export async function extractTarGz(
         const rel = safeEntryPath(rawName, stripComponents);
         if (rel === null) continue;
         const full = resolve(root, rel);
+        /* v8 ignore next 3 -- same second gate as the file case above */
         if (full !== root && !full.startsWith(root + sep)) {
           throw new TarError(`Tar entry escapes extraction root: ${rawName}`);
         }

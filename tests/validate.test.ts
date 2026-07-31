@@ -2,7 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { introspectSchema } from '../src/introspect.js';
-import { validateMigration } from '../src/validate.js';
+import type { ValidationReport } from '../src/types.js';
+import { validateMigration, ValidationError } from '../src/validate.js';
 import { SCHEMA_SQL, SEED_SQL } from './helpers.js';
 
 describe('validateMigration', () => {
@@ -77,5 +78,18 @@ describe('validateMigration', () => {
     const seq = report.sequences.find((s) => s.sequence.includes('t_id_seq'));
     expect(seq?.ok).toBe(false);
     expect(report.ok).toBe(false);
+  });
+});
+
+describe('ValidationError', () => {
+  it('falls back to a level-derived message when none is supplied', () => {
+    const report: ValidationReport = { level: 'counts', ok: false, tables: [], sequences: [] };
+
+    // migrate always passes an explicit message; the default exists for callers
+    // constructing the error themselves from a report they already hold.
+    expect(new ValidationError(report).message).toBe('Post-migration validation failed (counts).');
+    expect(new ValidationError(report, 'custom').message).toBe('custom');
+    expect(new ValidationError(report).report).toBe(report);
+    expect(new ValidationError(report).name).toBe('ValidationError');
   });
 });

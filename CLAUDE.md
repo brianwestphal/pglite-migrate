@@ -164,10 +164,10 @@ Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what 
 - **Upsert/`ON CONFLICT` re-run strategy** — needs PK/unique introspection (`docs/14`).
 - **CLI orchestration of the full backup→migrate→validate→swap on-startup-upgrade flow**, stale-`.new` cleanup, reflink backup fast-path (`docs/10`/`docs/11`).
 - **Open product decisions** flagged in docs 7–14 (backup default-on, identity-vs-serial normalization, validation throw-vs-report, etc.).
-- **Standalone reconstruction gaps (PGLM-76…80)** — `reconstructSchema` is **Partial**, not Shipped: no `CREATE SCHEMA` pre-phase (multi-schema sources fail outright), `CREATE SEQUENCE` emitted without start/increment/min/max/cycle, no `OWNED BY` re-link, and domain/composite types neither rebuilt nor reported (a mid-run crash that leaves a partially-built target). `detectUnsupported` covers 6 of the ~13 classes NG-9.10 lists. Detail in `docs/9` § Known gaps.
-- **Report and probe edges (PGLM-81…83, 85)** — `MigrationReport` does not echo the active `onExisting` strategy or mark truncated tables; the non-empty probe is a full `count(*)` rather than `LIMIT 1`; `count(*)::int` errors past 2³¹ rows; the CLI prints no per-table validation summary.
-- **Hygiene (PGLM-86…88)** — `exists()`/timestamp-sanitization/error-code/`resolveEngine` helpers duplicated across modules with no shared home (the `src/catalog.ts` treatment, applied to fs/error instead of SQL); qualified names hand-rolled instead of via `tableKey()`; no formatter config or format gate.
-- **Test gaps (PGLM-89…91)** — `onExisting: 'skip'` is never exercised against a *partially* populated target (the case it exists for); `swapIntoPlace` has no sequential-swap test; branch coverage is 88% against a 100% target.
+- **Reconstructing domains/composites (PGLM-92)** — detection ships and `onUnsupported: 'error'` refuses cleanly, but under the default `warn` a source whose column *uses* a domain still fails. Open scope decision (`docs/9` OQ-9.5), pinned by a `KNOWN LIMITATION` test.
+- **Formatter config (PGLM-88)** — no `.prettierrc` or format gate; style is held by convention. Awaiting a maintainer decision (add prettier vs. an ESLint `max-len` rule).
+
+The PGLM-74 audit's other 15 follow-ups (PGLM-76…91) are **done**: standalone reconstruction's four gaps, complete NG-9.10 unsupported-object detection, `MigrationReport.onExisting`/`truncatedTables`, the bounded `hasRows` probe, bigint-safe counts, the shared `src/fsutil.ts` helpers, `tableKey`/`objectKey` routing, per-table CLI validation output, the partially-populated-target and sequential-swap tests, and the branch-coverage pass.
 
 <!-- hotsheet:begin section=ticket-driven-work v=1 -->
 ## Ticket-Driven Work

@@ -1,4 +1,4 @@
-import { resolveEngine } from './engines/registry.js';
+import { tryResolveEngine } from './engines/registry.js';
 import type { PGliteLike } from './types.js';
 import { readEngineMajor } from './version.js';
 
@@ -49,12 +49,7 @@ interface EngineMismatchDetails {
 /** Name the engine version that *would* serve this major, when we know one. */
 function remedy(expectedMajor: number, engine: string | undefined): string {
   const alias = engine ?? 'pglite-old';
-  let pinned: string | null;
-  try {
-    pinned = resolveEngine(expectedMajor).version;
-  } catch {
-    pinned = null;
-  }
+  const pinned = tryResolveEngine(expectedMajor)?.version ?? null;
   if (pinned === null) {
     return `Open it with an engine that bundles PostgreSQL ${expectedMajor.toString()}.`;
   }

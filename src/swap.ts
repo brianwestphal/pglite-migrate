@@ -1,4 +1,6 @@
-import { rename, rm, stat } from 'node:fs/promises';
+import { rename, rm } from 'node:fs/promises';
+
+import { errorCode, exists, sanitizedTimestamp } from './fsutil.js';
 
 /** Options for {@link swapIntoPlace}. */
 export interface SwapOptions {
@@ -14,20 +16,6 @@ export interface SwapResult {
   canonical: string;
   /** Path of the retained previous cluster, or null if none was kept. */
   previous: string | null;
-}
-
-/** True if a path exists. */
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isExdev(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'EXDEV';
 }
 
 /**
@@ -58,7 +46,7 @@ export async function swapIntoPlace(
   }
 
   const keepOld = options.keepOld ?? true;
-  const timestamp = (options.timestamp ?? new Date().toISOString()).replace(/:/g, '-');
+  const timestamp = sanitizedTimestamp(options.timestamp);
   const oldPath = `${canonicalDir}.old-${timestamp}`;
   const canonicalExisted = await exists(canonicalDir);
 
@@ -74,7 +62,7 @@ export async function swapIntoPlace(
   } catch (err) {
     // Restore the original so the canonical location is never left missing.
     if (canonicalExisted) await rename(oldPath, canonicalDir).catch(() => undefined);
-    if (isExdev(err)) {
+    if (errorCode(err) === 'EXDEV') {
       throw new Error(
         `Cannot swap: ${newDir} is on a different filesystem than ${canonicalDir}. ` +
           `Stage the new cluster as a sibling of the canonical location.`,

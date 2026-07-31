@@ -11,6 +11,7 @@ import type {
   OnUnsupported,
   OnValidationFailure,
   ValidationLevel,
+  ValidationReport,
 } from './types.js';
 import { readClusterVersion } from './version.js';
 
@@ -218,6 +219,34 @@ function reportAcquired(io: CliIO, side: string, cluster: OpenedCluster): void {
 }
 
 /**
+ * Print the validation outcome: the per-table and per-sequence detail, then the
+ * one-line verdict.
+ *
+ * Detail is printed for every entry on a failure (so the operator sees the
+ * mismatched numbers, not just which table diverged) and only for the
+ * mismatches on a pass — which is none, keeping a healthy run quiet. The
+ * source-vs-target counts are the first thing anyone triaging a failed
+ * unattended upgrade wants, and they were previously only reachable from the
+ * library's `report.validation`.
+ */
+function reportValidation(io: CliIO, validation: ValidationReport): void {
+  if (!validation.ok) {
+    for (const t of validation.tables) {
+      const mark = t.ok ? '=' : '≠';
+      const digest = t.digestMatch === false ? ' (digest mismatch)' : '';
+      const counts = `${t.sourceRows.toString()} ${mark} ${t.targetRows.toString()}`;
+      io.err(`  ${t.table}: ${counts}${digest}`);
+    }
+    for (const s of validation.sequences) {
+      const mark = s.ok ? '>=' : '<';
+      const values = `source ${s.sourceValue ?? 'null'} ${mark} target ${s.targetValue ?? 'null'}`;
+      io.err(`  ${s.sequence}: ${values}`);
+    }
+  }
+  io.err(`Validation (${validation.level}): ${validation.ok ? 'OK' : 'FAILED'}.`);
+}
+
+/**
  * Execute the CLI for the given argv and return a process exit code (0 on
  * success / help, 1 on error). Side effects go through {@link CliIO} so tests
  * can capture them.
@@ -293,9 +322,7 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
       `${verb}: ${report.totalRows.toString()} rows across ${report.tables.length.toString()} tables, ${report.sequencesSet.toString()} sequences aligned.`,
     );
     if (report.validation !== undefined) {
-      io.err(
-        `Validation (${report.validation.level}): ${report.validation.ok ? 'OK' : 'FAILED'}.`,
-      );
+      reportValidation(io, report.validation);
       if (!report.validation.ok) return 1;
     }
     return 0;

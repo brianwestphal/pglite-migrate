@@ -211,6 +211,8 @@ export interface UnsupportedObject {
 
 /** What standalone schema reconstruction created (and could not). */
 export interface ReconstructionReport {
+  /** Non-`public` schemas created on the target so qualified objects can land. */
+  schemas: string[];
   enums: string[];
   sequences: string[];
   tables: string[];
@@ -258,6 +260,20 @@ export interface MigrationReport {
   deferredTables: string[];
   /** Tables left untouched because they were already populated (`onExisting: 'skip'`). */
   skippedTables: string[];
+  /**
+   * The re-run policy this run applied, including the default when the caller
+   * did not pass one — so a report is self-describing (FR-14.5).
+   */
+  onExisting: OnExisting;
+  /**
+   * Tables that already held rows and were emptied before transfer under
+   * `onExisting: 'truncate'` (FR-14.10).
+   *
+   * Always empty under `error` and `skip`. This is the only record that a
+   * destructive re-run discarded data: without it a `truncate` run is
+   * indistinguishable from a clean first run.
+   */
+  truncatedTables: string[];
   /** Post-migration validation result; present unless validation was `off`. */
   validation?: ValidationReport;
   /** Schema reconstruction result; present only when `reconstructSchema` was set. */
