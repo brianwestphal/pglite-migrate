@@ -1,5 +1,4 @@
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { PGlite as PGliteOld } from 'pglite-old';
@@ -10,6 +9,7 @@ import { openDataDir } from '../../src/loader.js';
 import { migrate } from '../../src/migrate.js';
 import { readClusterVersion } from '../../src/version.js';
 import { SCHEMA_SQL, SEED_SQL } from '../helpers.js';
+import { makeTempDir, removeTempDir } from '../tempdir.js';
 
 /**
  * The motivating real-world shape: **the consumer bundles only the destination
@@ -69,15 +69,15 @@ describe('migrating with an acquired source engine (fetched PG17 → bundled PG1
   let cacheDir: string;
 
   beforeEach(async () => {
-    sourceDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-acq-src-'));
-    targetDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-acq-tgt-'));
-    cacheDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-acq-cache-'));
+    sourceDir = await makeTempDir('pglite-migrate-acq-src-');
+    targetDir = await makeTempDir('pglite-migrate-acq-tgt-');
+    cacheDir = await makeTempDir('pglite-migrate-acq-cache-');
   });
 
   afterEach(async () => {
-    await rm(sourceDir, { recursive: true, force: true });
-    await rm(targetDir, { recursive: true, force: true });
-    await rm(cacheDir, { recursive: true, force: true });
+    await removeTempDir(sourceDir);
+    await removeTempDir(targetDir);
+    await removeTempDir(cacheDir);
   });
 
   /** Materialize a real PG17 cluster on disk using the old alias, then close it. */

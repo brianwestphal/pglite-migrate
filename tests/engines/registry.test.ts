@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,6 +10,7 @@ import {
   UnknownMajorError,
 } from '../../src/engines/registry.js';
 import { readClusterVersion } from '../../src/version.js';
+import { makeTempDir, removeTempDir } from '../tempdir.js';
 
 describe('resolveEngine', () => {
   it('resolves each major this build claims to know', () => {
@@ -70,11 +70,11 @@ describe('registry keys match what readClusterVersion returns', () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-reg-'));
+    dir = await makeTempDir('pglite-migrate-reg-');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('resolves an engine from a real PG_VERSION value', async () => {

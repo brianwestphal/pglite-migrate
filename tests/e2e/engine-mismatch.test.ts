@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { PGlite as PGliteOld } from 'pglite-old';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -9,6 +6,7 @@ import { openDataDir } from '../../src/loader.js';
 import { assertEngineMatchesDataDir, EngineMismatchError } from '../../src/precheck.js';
 import { readClusterVersion } from '../../src/version.js';
 import { SCHEMA_SQL } from '../helpers.js';
+import { makeTempDir, removeTempDir } from '../tempdir.js';
 
 /**
  * The precheck against a genuinely mismatched pair (PGLM-68).
@@ -26,11 +24,11 @@ describe('engine/data-directory major mismatch (PG18 engine on a PG17 dir)', () 
   let oldDir: string;
 
   beforeEach(async () => {
-    oldDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-mismatch-'));
+    oldDir = await makeTempDir('pglite-migrate-mismatch-');
   });
 
   afterEach(async () => {
-    await rm(oldDir, { recursive: true, force: true });
+    await removeTempDir(oldDir);
   });
 
   /** Materialize a real PG17 cluster on disk with the old engine. */

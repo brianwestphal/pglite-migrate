@@ -49,6 +49,7 @@ tests/
   demo-caret.test.ts                     Caret-tracking guard: parses assets/demos/*.svg, asserts the typing caret and text-reveal share a constant-speed (linear) timing so the caret can't lag the typed text (PGLM-37 / DM-1204)
   demo-loop.test.ts                      Loop-boundary guard: parses assets/demos/*.svg, asserts the output is revealed then hidden and never outlives the typed command at the loop cut (PGLM-46)
   helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
+  tempdir.ts / tempdir.test.ts           makeTempDir/removeTempDir — every test scratch dir goes through these; removeTempDir retries ENOTEMPTY and never throws, so teardown can't bury a real failure (PGLM-93)
   e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
   e2e/acquired-engine.test.ts            Migration whose SOURCE engine is downloaded, not installed. The only network-dependent suite — self-gates and ctx.skip()s offline
   e2e/engine-mismatch.test.ts            Real PG18 engine on a real PG17 dir: the precheck's actionable error replaces PGlite's opaque init failure

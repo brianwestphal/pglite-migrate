@@ -26,6 +26,15 @@ PGlite's bundled Postgres major tracks its minor line: `0.4.x` → **PG17**, `0.
 
 - **NFR-6.4** It self-gates on the npm registry being reachable (a `HEAD` with a 10 s timeout) and uses vitest's `ctx.skip()` when offline, so `npm run test:e2e` stays green on a disconnected machine and honestly reports **skipped** rather than passing tests that did nothing. One case — a missing engine with acquisition *off* — needs no network and runs either way.
 
+## Test-directory hygiene
+
+Twelve test files materialize a real data directory under the OS temp dir. They all go through `tests/tempdir.ts` — `makeTempDir(prefix)` / `removeTempDir(dir)` — rather than calling `mkdtemp`/`rm` directly, for one specific reason (PGLM-93).
+
+- **`removeTempDir` retries and never throws.** When a test times out, vitest runs `afterEach` while the test's own async work is still in flight, so a PGlite instance may still be writing into the directory being removed. `rm` then walks a tree that repopulates underneath it and throws `ENOTEMPTY`. The result was that a timeout surfaced *twice* — once as the genuine `Test timed out in 30000ms`, and again as an `ENOTEMPTY` from teardown that buried it. Node's `rm` retries exactly this error class when given `maxRetries`, and anything surviving that is swallowed: cleanup says nothing about the system under test, so it must never be what fails a test.
+- The one `rm` that is deliberately **not** routed through the helper is in `tests/engines/acquire.test.ts` — deleting a cache entry there is a test *action* (proving re-download), not cleanup, so it must stay strict.
+
+> **Running two full suites concurrently is not supported.** Both write `coverage/.tmp` (`reportsDirectory: 'coverage'` is a fixed path), so they delete each other's temp coverage files and fail with an unrelated `ENOENT`. Use `--coverage.enabled=false` on one of them if you ever need to.
+
 ## Philosophy (see CLAUDE.md)
 
 - **Double coverage** — pure logic gets focused unit tests; anything touching a real cluster is proven end to end.

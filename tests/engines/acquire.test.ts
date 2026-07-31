@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,6 +16,7 @@ import {
 } from '../../src/engines/acquire.js';
 import { extractTarGz } from '../../src/engines/tar.js';
 import type { EngineRelease } from '../../src/types.js';
+import { makeTempDir, removeTempDir } from '../tempdir.js';
 import { makePackageTgz, makeTgz } from './fixtures.js';
 
 /** sha512 integrity string for a buffer, in npm's `dist.integrity` format. */
@@ -78,14 +78,14 @@ describe('acquireRelease', () => {
   let url: string;
 
   beforeEach(async () => {
-    cacheDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-cache-'));
+    cacheDir = await makeTempDir('pglite-migrate-cache-');
     registry = new FakeRegistry(TGZ);
     url = await registry.start();
   });
 
   afterEach(async () => {
     await registry.stop();
-    await rm(cacheDir, { recursive: true, force: true });
+    await removeTempDir(cacheDir);
   });
 
   const opts = (extra: Record<string, unknown> = {}) => ({ cacheDir, registryUrl: url, ...extra });
@@ -266,7 +266,7 @@ describe('acquireEngine', () => {
     // an IntegrityError here proves the pinned hash for PG17 was the one used.
     const registry = new FakeRegistry(makePackageTgz());
     const url = await registry.start();
-    const cacheDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-cache-'));
+    const cacheDir = await makeTempDir('pglite-migrate-cache-');
     try {
       const error = await acquireEngine(17, { cacheDir, registryUrl: url }).catch(
         (e: unknown) => e,
@@ -275,7 +275,7 @@ describe('acquireEngine', () => {
       expect((error as IntegrityError).version).toBe('0.4.6');
     } finally {
       await registry.stop();
-      await rm(cacheDir, { recursive: true, force: true });
+      await removeTempDir(cacheDir);
     }
   });
 
@@ -288,11 +288,11 @@ describe('resolveEntry', () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-entry-'));
+    dir = await makeTempDir('pglite-migrate-entry-');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('prefers the exports "." import condition', async () => {

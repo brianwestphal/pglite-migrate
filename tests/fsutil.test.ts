@@ -1,21 +1,21 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { errorCode, exists, sanitizedTimestamp } from '../src/fsutil.js';
+import { makeTempDir, removeTempDir } from './tempdir.js';
 
 describe('exists', () => {
   let dir: string;
 
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-fsutil-'));
+    dir = await makeTempDir('pglite-migrate-fsutil-');
     await writeFile(join(dir, 'present'), 'x');
   });
 
   afterAll(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('is true for a file and for a directory', async () => {

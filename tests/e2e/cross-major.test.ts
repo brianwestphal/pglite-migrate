@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { PGlite as PGliteNew } from 'pglite-new';
 import { PGlite as PGliteOld } from 'pglite-old';
@@ -9,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from '../../src/migrate.js';
 import { readClusterVersion } from '../../src/version.js';
 import { SCHEMA_SQL, SEED_SQL } from '../helpers.js';
+import { makeTempDir, removeTempDir } from '../tempdir.js';
 
 /**
  * The genuine cross-major run (FR-6.2, PGLM-19 / PGLM-9).
@@ -32,13 +30,13 @@ describe('cross-major on-disk migration (PG17 → PG18)', () => {
   let newDir: string;
 
   beforeEach(async () => {
-    oldDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-xmaj-old-'));
-    newDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-xmaj-new-'));
+    oldDir = await makeTempDir('pglite-migrate-xmaj-old-');
+    newDir = await makeTempDir('pglite-migrate-xmaj-new-');
   });
 
   afterEach(async () => {
-    await rm(oldDir, { recursive: true, force: true });
-    await rm(newDir, { recursive: true, force: true });
+    await removeTempDir(oldDir);
+    await removeTempDir(newDir);
   });
 
   /** Boot an engine on a throwaway dir just to learn its on-disk major. */

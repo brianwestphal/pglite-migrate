@@ -1,12 +1,12 @@
 import * as fsp from 'node:fs/promises';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { swapIntoPlace } from '../src/swap.js';
+import { makeTempDir, removeTempDir } from './tempdir.js';
 
 // ESM module namespaces are non-configurable, so vi.spyOn can't intercept
 // node:fs/promises. Mock the module instead, making `rename` a vi.fn that
@@ -56,12 +56,12 @@ describe('swapIntoPlace', () => {
 
   beforeEach(async () => {
     vi.mocked(fsp.rename).mockImplementation(realRename); // reset to passthrough
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-swap-'));
+    dir = await makeTempDir('pglite-migrate-swap-');
     canonical = join(dir, 'pgdata');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('swaps the new cluster into place and retains the previous one', async () => {
@@ -195,12 +195,12 @@ describe('swapIntoPlace (sequential swaps)', () => {
 
   beforeEach(async () => {
     vi.mocked(fsp.rename).mockImplementation(realRename);
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-swapseq-'));
+    dir = await makeTempDir('pglite-migrate-swapseq-');
     canonical = join(dir, 'pgdata');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   /** Stage a fresh cluster at `<canonical>.new-<tag>` carrying `marker`. */

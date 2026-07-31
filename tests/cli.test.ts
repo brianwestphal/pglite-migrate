@@ -1,5 +1,3 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
@@ -9,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type CliIO,parseArgs, run } from '../src/cli.js';
 import { SCHEMA_SQL, SEED_SQL } from './helpers.js';
+import { makeTempDir, removeTempDir } from './tempdir.js';
 
 describe('parseArgs', () => {
   it('parses positional source/target', () => {
@@ -178,14 +177,14 @@ describe('run', () => {
   }
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-cli-'));
+    dir = await makeTempDir('pglite-migrate-cli-');
     out = [];
     err = [];
     io = { out: (m) => out.push(m), err: (m) => err.push(m) };
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('prints usage and exits 0 for --help', async () => {

@@ -1,11 +1,11 @@
 import * as fsp from 'node:fs/promises';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { backupDataDir } from '../src/backup.js';
+import { makeTempDir, removeTempDir } from './tempdir.js';
 
 // ESM module namespaces are non-configurable, so vi.spyOn can't intercept
 // node:fs/promises. Mock the module instead, making `cp` a vi.fn that passes
@@ -27,7 +27,7 @@ describe('backupDataDir', () => {
 
   beforeEach(async () => {
     vi.mocked(fsp.cp).mockImplementation(realCp); // reset to passthrough
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-backup-'));
+    dir = await makeTempDir('pglite-migrate-backup-');
     dataDir = join(dir, 'pgdata');
     await mkdir(join(dataDir, 'base'), { recursive: true });
     await writeFile(join(dataDir, 'PG_VERSION'), '17\n');
@@ -36,7 +36,7 @@ describe('backupDataDir', () => {
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('copies the data dir to a verified, timestamped sibling and leaves the source intact', async () => {
@@ -135,11 +135,11 @@ describe('backupDataDir (no PG_VERSION)', () => {
 
   beforeEach(async () => {
     vi.mocked(fsp.cp).mockImplementation(realCp); // reset to passthrough
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-backup-nover-'));
+    dir = await makeTempDir('pglite-migrate-backup-nover-');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('backs up a directory that has no PG_VERSION, verifying counts only', async () => {

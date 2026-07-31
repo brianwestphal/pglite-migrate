@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -10,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDataDir } from '../src/loader.js';
 import type { EngineRelease } from '../src/types.js';
 import { makeFakeEngineTgz } from './engines/fixtures.js';
+import { makeTempDir, removeTempDir } from './tempdir.js';
 
 /** An address that refuses connections — proves no download was attempted. */
 async function closedPortUrl(): Promise<string> {
@@ -28,11 +28,11 @@ describe('openDataDir', () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'pglite-migrate-loader-'));
+    dir = await makeTempDir('pglite-migrate-loader-');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir);
   });
 
   it('opens a data dir with the default engine and returns a queryable, closable cluster', async () => {
