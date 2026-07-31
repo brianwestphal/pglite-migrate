@@ -112,9 +112,13 @@ describe('assets/demos output never outlives the typed command at the loop (PGLM
       const css = readFileSync(new URL(`../assets/demos/${name}.svg`, import.meta.url), 'utf8');
       const kfs = intraFrameOpacityKeyframes(css);
       // Reveal: opacity 0 at the start, 1 at the loop end (output appears, held).
-      const reveal = kfs.find((k) => valueAtPct(k.groups, 0) === 0 && valueAtPct(k.groups, 100) === 1);
+      const reveal = kfs.find(
+        (k) => valueAtPct(k.groups, 0) === 0 && valueAtPct(k.groups, 100) === 1,
+      );
       // Hide: opacity 1 at the start, 0 at the loop end (output cleared before looping).
-      const hide = kfs.find((k) => valueAtPct(k.groups, 0) === 1 && valueAtPct(k.groups, 100) === 0);
+      const hide = kfs.find(
+        (k) => valueAtPct(k.groups, 0) === 1 && valueAtPct(k.groups, 100) === 0,
+      );
 
       it('reveals the output (opacity 0 → 1)', () => {
         expect(reveal, 'an output reveal keyframe').toBeDefined();
@@ -130,7 +134,8 @@ describe('assets/demos output never outlives the typed command at the loop (PGLM
       it('clears the output no later than the typed command disappears', () => {
         const hidden = hide!.groups.find((g) => g.value === 0)!;
         const stillVisible = hide!.groups.find((g) => g.value === 1)!;
-        const outputGone = Math.min(...hidden.stops.filter((s) => s > Math.max(...stillVisible.stops)));
+        const lastVisible = Math.max(...stillVisible.stops);
+        const outputGone = Math.min(...hidden.stops.filter((s) => s > lastVisible));
         const cmdGone = commandGonePct(css);
         // Output must vanish at (or before) the command — never linger past it.
         expect(outputGone).toBeLessThanOrEqual(cmdGone + SAME_INSTANT_PCT);

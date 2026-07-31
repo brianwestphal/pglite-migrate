@@ -268,7 +268,9 @@ describe('acquireEngine', () => {
     const url = await registry.start();
     const cacheDir = await mkdtemp(join(tmpdir(), 'pglite-migrate-cache-'));
     try {
-      const error = await acquireEngine(17, { cacheDir, registryUrl: url }).catch((e: unknown) => e);
+      const error = await acquireEngine(17, { cacheDir, registryUrl: url }).catch(
+        (e: unknown) => e,
+      );
       expect(error).toBeInstanceOf(IntegrityError);
       expect((error as IntegrityError).version).toBe('0.4.6');
     } finally {

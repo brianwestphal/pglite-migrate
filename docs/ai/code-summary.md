@@ -101,6 +101,7 @@ docs/                 Requirements (1–15), ARCHITECTURE.md, ai/ summaries
 - Build: `npm run build` (tsup → `dist/index.js` + `dist/engines.js` + `dist/cli.js` + `.d.ts`)
 - Unit: `npm run test` · E2E: `npm run test:e2e` · Both: `npm run test:all`
 - Lint: `npm run lint` · Types: `npm run typecheck`
+- **Formatting is enforced by ESLint, not a formatter.** `eslint.config.mjs` owns import ordering/placement (`simple-import-sort`, `import/first`, `import/newline-after-import`, `import/no-duplicates`, `consistent-type-imports`) plus `max-len` at 100 columns, ignoring strings, template literals and regex literals (PGLM-88). There is deliberately no prettier/`.prettierrc`. CI enforces it via the existing `npm run lint` step — no separate format gate.
 - Release-adjacent: `npm run commit-message` (gitgist) · `npm run changelog-analysis -- --next <ver>` (diff analysis feeding the `technical-changelog` skill; prints only, writes nothing)
 - `gitgist.config.json` — repo-level gitgist config. Excludes the generated SVGs (`assets/demos/*`, `assets/diagram.svg`) from the diff *body* fed to the model; they were 52% of the release-notes budget. The files still appear in the changed-file list and diffstat, so "demos regenerated" is still reportable. Bypass with `--no-config`.
 

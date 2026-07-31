@@ -141,6 +141,7 @@ Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what 
 - Raw SQL only — no ORM. All identifiers spliced into SQL go through `src/ident.ts` quoting helpers (catalog names are trusted but can still need quoting).
 - One primary export per file; keep files focused and short. Use sub-folders when a concern grows.
 - **Always use American-English spelling** in code, comments, identifiers, messages, docs, and commit messages (`color`, `behavior`, `canceled`, `analyze`, `initialize`, `gray`).
+- **Formatting is ESLint's job — there is no prettier here, deliberately.** `eslint.config.mjs` enforces import ordering/placement and `max-len` at 100 columns, ignoring strings, template literals and regex literals (so the pinned sha512s, CLI usage text and the SVG-parsing regex stay legal). Wrap long *code* lines; `npm run lint` will tell you. Comments are **not** exempt — every comment in the tree already wraps under 100 and that is worth keeping.
 
 ## Git Workflow
 
@@ -165,9 +166,8 @@ Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what 
 - **CLI orchestration of the full backup→migrate→validate→swap on-startup-upgrade flow**, stale-`.new` cleanup, reflink backup fast-path (`docs/10`/`docs/11`).
 - **Open product decisions** flagged in docs 7–14 (backup default-on, identity-vs-serial normalization, validation throw-vs-report, etc.).
 - **Reconstructing domains/composites (PGLM-92)** — detection ships and `onUnsupported: 'error'` refuses cleanly, but under the default `warn` a source whose column *uses* a domain still fails. Open scope decision (`docs/9` OQ-9.5), pinned by a `KNOWN LIMITATION` test.
-- **Formatter config (PGLM-88)** — no `.prettierrc` or format gate; style is held by convention. Awaiting a maintainer decision (add prettier vs. an ESLint `max-len` rule).
 
-The PGLM-74 audit's other 15 follow-ups (PGLM-76…91) are **done**: standalone reconstruction's four gaps, complete NG-9.10 unsupported-object detection, `MigrationReport.onExisting`/`truncatedTables`, the bounded `hasRows` probe, bigint-safe counts, the shared `src/fsutil.ts` helpers, `tableKey`/`objectKey` routing, per-table CLI validation output, the partially-populated-target and sequential-swap tests, and the branch-coverage pass.
+The PGLM-74 audit's other 16 follow-ups (PGLM-76…91) are **done**: standalone reconstruction's four gaps, complete NG-9.10 unsupported-object detection, `MigrationReport.onExisting`/`truncatedTables`, the bounded `hasRows` probe, bigint-safe counts, the shared `src/fsutil.ts` helpers, `tableKey`/`objectKey` routing, per-table CLI validation output, the partially-populated-target and sequential-swap tests, the branch-coverage pass, and the `max-len` lint gate (PGLM-88 — resolved as an ESLint rule rather than a formatter; no new dependency, and CI's existing `npm run lint` step enforces it).
 
 <!-- hotsheet:begin section=ticket-driven-work v=1 -->
 ## Ticket-Driven Work

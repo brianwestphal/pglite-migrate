@@ -36,6 +36,30 @@ export default tseslint.config(
       "import/newline-after-import": "error",
       "import/no-duplicates": "error",
       "tsdoc/syntax": "warn",
+      // The only formatting rule here. `recommended` and `strictTypeChecked` are
+      // correctness rule sets, so nothing else enforces whitespace — this pins
+      // the ~100-column wrapping the codebase already follows (PGLM-88).
+      //
+      // The three ignores were each chosen against a measured violation count,
+      // not guessed. Bare `code: 100` flags 50 lines; almost all are content
+      // that cannot be wrapped without harming it:
+      //   ignoreStrings         — the pinned sha512 literals in engines/registry.ts
+      //   ignoreTemplateLiterals — the CLI usage text and error messages
+      //   ignoreRegExpLiterals  — the SVG-parsing regex in tests/diagram-svg.test.ts
+      // That leaves exactly the real target: over-long *code* lines.
+      //
+      // `ignoreComments` is deliberately NOT set. Adding it changes nothing
+      // today — every comment in the tree already wraps under 100 — so leaving
+      // it off costs nothing now and keeps that property from eroding later.
+      //
+      // Note: ESLint's stylistic rules are deprecated (still functional in v10)
+      // and will eventually be removed. When that happens, move this to
+      // @stylistic/eslint-plugin or adopt a formatter; the intent is the rule,
+      // not the plugin it lives in.
+      "max-len": [
+        "error",
+        { code: 100, ignoreStrings: true, ignoreTemplateLiterals: true, ignoreRegExpLiterals: true },
+      ],
     },
   },
   {
