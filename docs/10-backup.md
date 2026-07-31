@@ -66,12 +66,13 @@ Proposed flags for `src/cli.ts` (see [`4-cli.md`](./4-cli.md) NG-4.9, which curr
 
 ```
   --backup                Take a timestamped backup of the source before migrating.
-  --no-backup             Skip the backup (explicit opt-out).
-  --backup-dir <path>     Backup location (default: <source>.bak-<timestamp> sibling).
+  --backup-dir <path>     Backup location (default: <source>.bak-<timestamp> sibling). Implies --backup.
   --keep <n>              Retain at most n timestamped backups; prune the oldest. (default: keep all)
 ```
 
-Recommended default: **backup on by default** for the CLI (safety-first; the operator must explicitly `--no-backup` to skip). The library function stays explicit/opt-in so host apps compose it deliberately. See [Open Questions](#open-questions).
+**As shipped, backup is opt-in** — `--backup` off by default, and therefore no `--no-backup` flag (there is nothing to opt out of). The doc originally proposed the reverse; the open question below is still unresolved, so the safer-to-reverse default was taken. If backup ever becomes default-on, `--no-backup` lands with it.
+
+Backup is also skipped under `--dry-run`: a dry run writes nothing, so there is nothing to protect against.
 
 On a successful backup the CLI prints, to stderr, the path it created, e.g.:
 
@@ -84,7 +85,7 @@ Backed up source to /data/pgdata.bak-2026-06-16T14-30-05Z
 - Running the CLI against a source with data creates a backup directory at the documented default location, and that directory contains a complete, openable copy of the source (its `PG_VERSION` matches and it can be opened by the old engine).
 - After a successful run, the **source** directory is byte-for-byte identical to its pre-run state.
 - After a **failed** run (e.g. a transfer error), the source is still byte-for-byte identical and the backup exists, so the operator can recover.
-- `--no-backup` skips backup creation; `--backup-dir` redirects the backup; `--keep <n>` bounds the number of retained backups and never deletes the current run's backup.
+- Omitting `--backup` skips backup creation; `--backup-dir` redirects the backup; `--keep <n>` bounds the number of retained backups and never deletes the current run's backup.
 - A backup that fails verification (or fails to copy) aborts the run before any engine is opened, with a clear error and no half-written final backup directory.
 
 ## Testing requirements

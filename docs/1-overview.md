@@ -24,7 +24,7 @@ The library's defining design choice: the core speaks only to a minimal structur
 
 ## Non-goals (v1)
 
-- **NG-1.1** Reconstructing arbitrary schemas (the no-host-app case). v1 is app-driven: the host app creates the target schema. See `3-schema-reconstruction.md`.
+- **NG-1.1** Reconstructing **arbitrary** schemas. The default path is app-driven — the host app creates the target schema. Opt-in reconstruction of **app-class** objects has since shipped (`--reconstruct-schema`, `3-schema-reconstruction.md`); what stays out of scope is everything past that line, per NG-1.2.
 - **NG-1.2** Full `pg_dump` parity — views, functions, triggers, RLS policies, partitioning, comments, grants. Out of scope; the line is drawn at app-class schema objects.
 - **NG-1.3** Migrating *native* (non-PGlite) clusters. For that, `pg_upgrade` with portable binaries (`embedded-postgres`) is the right tool, not this package.
 - **NG-1.4** Same-major minor upgrades — PGlite's own `dumpDataDir`/`loadDataDir` already handles those (format-coupled, same-major only).
@@ -34,5 +34,5 @@ The library's defining design choice: the core speaks only to a minimal structur
 - **PGDATA / data directory** — the on-disk directory holding a PostgreSQL cluster's files, including `PG_VERSION`.
 - **Major version** — the Postgres major (17, 18, …); the boundary across which the on-disk format may change.
 - **App-driven migration** — the host application creates its own schema on the new cluster; this library transfers data only.
-- **Standalone migration** — migrating a data directory with no host app present, requiring schema reconstruction (deferred).
+- **Standalone migration** — migrating a data directory with no host app present, so the migrator must reconstruct the app-class schema on the target first (`--reconstruct-schema`).
 - **`PGliteLike`** — the minimal structural query interface the core depends on, decoupling it from any specific PGlite version.

@@ -1,6 +1,19 @@
 # 9 — Standalone Schema Reconstruction (Detailed Spec)
 
-**Status: Implemented (PGLM-25; spike PGLM-24).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
+**Status: Implemented (PGLM-25; spike PGLM-24), with four verified gaps — see [Known gaps](#known-gaps-in-the-shipped-implementation).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
+
+## Known gaps in the shipped implementation
+
+Each was reproduced against a real in-memory PGlite pair, not inferred from reading, and each has a follow-up ticket.
+
+| Gap | Requirement | Observed behavior |
+| --- | --- | --- |
+| **Non-`public` schemas are never created on the target.** `reconstructEnums`/`reconstructTables` emit `CREATE … "app"."t"` without a preceding `CREATE SCHEMA`. | OQ-9.6 (recommended a `CREATE SCHEMA IF NOT EXISTS` pre-phase), NFR-9.9 | A source with `CREATE SCHEMA app; CREATE TABLE app.t (…)` fails with `schema "app" does not exist`. Standalone mode only works for single-schema (`public`) sources today, while `introspectSchema` deliberately covers every non-system schema. |
+| **Sequence parameters are dropped.** `reconstructSequences` emits a bare `CREATE SEQUENCE IF NOT EXISTS <name>`. | FR-9.5 | A source `CREATE SEQUENCE s1 START 100 INCREMENT 5 MAXVALUE 900 CYCLE` reconstructs as increment `1`, max `9223372036854775807`, start `1`, `cycle false`. Silent behavior change — a cycling sequence stops cycling and a strided one stops striding. `applySequences` later sets `last_value`, which masks it for the common serial case. |
+| **`OWNED BY` is never re-established.** | FR-9.5 | After reconstructing `CREATE TABLE u (id serial primary key, …)`, `pg_get_serial_sequence('u','id')` on the target returns `NULL`. The column default `nextval(…)` is correct, so inserts work, but the sequence is orphaned: dropping the table leaves it behind, and any tooling that resolves a column's sequence through `pg_get_serial_sequence` breaks. |
+| **Domain and composite types are neither reconstructed nor reported.** `reconstructEnums` covers `pg_enum` only; `detectUnsupported` does not look at `pg_type` for `typtype` `d`/`c`. | FR-9.4, FR-9.6 | A source with `CREATE DOMAIN posint AS integer CHECK (VALUE > 0)` and a column of that type fails mid-reconstruction with `type "posint" does not exist` — after enums and sequences have already been created on the target. FR-9.6's "never silently drop" contract is met only in the sense that it is loud; it is not *detected and reported*, and the target is left partially built. |
+
+Separately, `detectUnsupported` covers views, materialized views, partitioned tables, functions, triggers, and RLS policies — but **not** the remaining classes NG-9.10 enumerates: operator classes, non-default collations, comments, grants/ownership, extensions, foreign tables, and rules. Those are silently absent from the report.
 
 ## Motivation / Problem
 

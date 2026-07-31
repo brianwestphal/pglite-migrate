@@ -17,9 +17,18 @@ The problem (PGlite can't open an old-major data dir after a major bump) and the
 - FR-2.7 FK introspection — **Shipped**, hardened: edges are schema-qualified (PGLM-20) so ordering + cycle detection work for `public`-schema tables (previously silently dropped)
 - FR-2.14 / NFR-2.15 transfer — **Shipped**: COPY-text first (preserves `json` etc.) with per-table row-by-row INSERT fallback (PGLM-22/doc 7)
 
-## 3 / 9 — Schema Reconstruction, standalone — Shipped
+## 3 / 9 — Schema Reconstruction, standalone — **Partial**
 
 The no-host-app DDL path. `reconstructSchema(source, target, { onUnsupported })` rebuilds app-class objects (enums → sequences → tables+defaults → constraints → indexes) via `pg_get_*def`; out-of-scope objects are detected & reported. `onUnsupported` (default `warn`) escalates to `error` (throws before any DDL) — surfaced on `MigrateOptions` and CLI `--on-unsupported` (PGLM-38). Opt-in via `migrate({ reconstructSchema: true })` / CLI `--reconstruct-schema`. (PGLM-25/doc 9; spike PGLM-24 chose hand-rolled.)
+
+**Downgraded from Shipped to Partial (PGLM-74 audit)** — four gaps reproduced against a real PGlite pair, each with a follow-up ticket; detail in doc 9 § Known gaps:
+
+1. **Multi-schema sources fail outright** — no `CREATE SCHEMA` pre-phase, so a non-`public` source dies with `schema "x" does not exist` (OQ-9.6).
+2. **Sequence parameters dropped** — `CREATE SEQUENCE` is emitted bare, losing start/increment/min/max/cycle (FR-9.5).
+3. **`OWNED BY` never re-established** — `pg_get_serial_sequence` returns `NULL` on the target; the sequence is orphaned (FR-9.5).
+4. **Domain/composite types neither rebuilt nor reported** — reconstruction dies mid-run on `type "x" does not exist`, after partially building the target (FR-9.4/FR-9.6).
+
+`detectUnsupported` also covers only 6 of the ~13 object classes NG-9.10 enumerates (missing: opclasses, collations, comments, grants, extensions, foreign tables, rules, domains/composites).
 
 ## 4 — CLI (`docs/4-cli.md`) — Shipped (one blocked)
 
@@ -32,7 +41,7 @@ The no-host-app DDL path. `reconstructSchema(source, target, { onUnsupported })`
 
 ## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Shipped
 
-Backup (FR-5.1), atomic swap (FR-5.2, library primitive), dry-run (FR-5.3), post-migration validation (FR-5.4), FK-cycle correctness (FR-5.5), idempotence (FR-5.6) — all **implemented**. CLI orchestration of the full backup→migrate→validate→swap flow is the host-app's to compose (swap is a primitive); see doc 11.
+Backup (FR-5.1), atomic swap (FR-5.2, library primitive), dry-run (FR-5.3), post-migration validation (FR-5.4), FK-cycle correctness (FR-5.5), idempotence (FR-5.6) — all **implemented**. CLI orchestration of the full backup→migrate→validate→swap flow is the host-app's to compose (swap is a primitive); see doc 11. Doc 5 was rewritten from its stale "DEFERRED / design only" header to a per-FR status page in the PGLM-74 audit.
 
 ## 6 — Testing (`docs/6-testing.md`) — Shipped
 
@@ -61,8 +70,8 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 - `docs/10` backup — **done** (PGLM-26, opt-in CLI); `--keep <n>` retention (FR-10.6) built (PGLM-39).
 - `docs/11` atomic swap — **done** as `swapIntoPlace` primitive (PGLM-27).
 - `docs/12` dry-run — **done** (PGLM-28).
-- `docs/13` validation — **done** (PGLM-29, default `counts`); FR-13.4 resolved (PGLM-40) as opt-in `onValidationFailure: 'report' | 'throw'` (default `report`; `throw` raises the exported `ValidationError`), CLI `--strict` / exits non-zero.
-- `docs/14` idempotence — **done** (PGLM-30, default `error`).
+- `docs/13` validation — **done** (PGLM-29, default `counts`); FR-13.4 resolved (PGLM-40) as opt-in `onValidationFailure: 'report' | 'throw'` (default `report`; `throw` raises the exported `ValidationError`), CLI `--strict` / exits non-zero. *Reduced surface:* no `mismatches[]` on the typed report and no per-table CLI summary (doc 13 reconciled); counts are `count(*)::int`, which errors past 2³¹ rows instead of comparing BigInt-safe.
+- `docs/14` idempotence — **done** (PGLM-30, default `error`), two **Partial** edges: `MigrationReport` does not echo the active `onExisting` strategy or mark truncated-then-transferred tables (FR-14.5/FR-14.10), and the non-empty probe is a full `count(*)` rather than the bounded `LIMIT 1` NFR-14.11 calls for.
 
 ## Remaining follow-ups
 
@@ -71,6 +80,8 @@ Each doc expanded a brief mention into an implementation-ready spec, and all are
 3. CLI orchestration of swap into the on-startup-upgrade flow; stale-`.new` cleanup; reflink backup fast-path — follow-ups in docs 10/11.
 4. Open product decisions flagged in docs 7–14 (e.g. backup default-on, identity-vs-serial normalization).
 5. ~~Engine/cluster major precheck.~~ **Done (PGLM-68)** — see FR-4.7 above.
+6. **Reconstruction gaps (PGLM-74 audit)** — multi-schema sources, sequence parameters, `OWNED BY`, domain/composite types, and the incomplete unsupported-object detector. See § 3/9 above and doc 9 § Known gaps.
+7. **Report/probe edges (PGLM-74 audit)** — surface the active `onExisting` strategy and truncated-table marking (FR-14.5/FR-14.10), swap the non-empty probe to `LIMIT 1` (NFR-14.11), and make row counts BigInt-safe rather than `count(*)::int` (doc 13).
 
 ## Maintenance triggers
 

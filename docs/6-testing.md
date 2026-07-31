@@ -34,17 +34,22 @@ PGlite's bundled Postgres major tracks its minor line: `0.4.x` → **PG17**, `0.
 
 ## What the e2e currently asserts
 
-- All rows copied, in FK-safe order, with no constraint violation.
-- `timestamptz` values preserved.
+- All rows copied, in FK-safe order, with no constraint violation (`roundtrip.test.ts`).
+- `timestamptz` values preserved; `json` source text preserved verbatim, plus `jsonb`/`numeric`/`bytea`/array fidelity across the two majors (`fidelity.test.ts`).
 - Sequences realigned so a post-migration insert receives an id past the migrated maximum.
+- A populated FK cycle transfers with no violation and leaves the target's constraints in their original deferrability (`fk-cycle.test.ts`).
+- A bare target reconstructed from the source, then loaded (`standalone.test.ts`).
+- A PG18 engine genuinely refusing a PG17 data directory, and the actionable precheck error that replaces PGlite's opaque failure (`cross-major.test.ts`, `engine-mismatch.test.ts`).
+- A migration whose source engine is downloaded rather than installed (`acquired-engine.test.ts`, network-gated).
 
 ## Gaps to add as the library grows
 
-- Fidelity cases for `json`/`jsonb`, `numeric`, `bytea`, arrays (will harden once the COPY-text path lands — `2-data-migration.md`).
-- FK-cycle handling once deferred constraints are implemented (`5-safety-and-rollback.md`).
-- Standalone schema-reconstruction e2e once that mode exists (`3-schema-reconstruction.md`).
+- ~~Fidelity cases for `json`/`jsonb`, `numeric`, `bytea`, arrays.~~ **Done (PGLM-22)** — `fidelity.test.ts` compares each column's `::text` rendering across the two engines; COPY-text closed the one real gap (plain `json` whitespace).
+- ~~FK-cycle handling once deferred constraints are implemented.~~ **Done (PGLM-23)** — `fk-cycle.test.ts`, including the `NOT DEFERRABLE` variant.
+- ~~Standalone schema-reconstruction e2e once that mode exists.~~ **Done (PGLM-25/PGLM-18)** — `standalone.test.ts`.
 - ~~A true cross-major run once a second Postgres major is available as a PGlite build.~~ **Done (PGLM-19)** — the aliases resolve to PG17 (0.4.3) and PG18 (0.5.3); the whole suite is cross-major and `cross-major.test.ts` proves the new-engine-refuses-old-dir failure on disk.
 - ~~A migration whose source engine is acquired rather than installed.~~ **Done (PGLM-67)** — `acquired-engine.test.ts`, network-gated per NFR-6.4.
+- **Still open:** fidelity coverage for the unconfirmed at-risk types listed in [`7-copy-text-transfer.md`](7-copy-text-transfer.md) (`xml`, `money`, ranges, composite/domain types, `tsvector`); a standalone-reconstruction case over a **multi-schema** source; and an end-to-end backup → migrate → validate → `swapIntoPlace` composition once the CLI orchestrates it ([`11-atomic-swap.md`](11-atomic-swap.md)).
 
 ## Commands
 

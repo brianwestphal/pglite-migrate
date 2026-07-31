@@ -5,7 +5,7 @@ The v1 core. The host application has already created its schema on the target e
 ## Entry point
 
 - **FR-2.1** `migrate(options: MigrateOptions): Promise<MigrationReport>` (`src/migrate.ts`) is the primary API. It takes an already-open `source` and `target` (`PGliteLike`), introspects the source, transfers data in FK-safe order, realigns sequences, and returns a report.
-- **FR-2.2** `migrate` performs **no DDL** on the target and never touches on-disk files directly. Both clusters are passed in already open, which is what permits two different PGlite majors.
+- **FR-2.2** `migrate` performs **no DDL** on the target by default, and never touches on-disk files directly. Both clusters are passed in already open, which is what permits two different PGlite majors. Two sanctioned exceptions exist, both narrow and explicit: the opt-in standalone rebuild (`reconstructSchema: true`, [`9-standalone-schema-reconstruction.md`](9-standalone-schema-reconstruction.md)) and the transient FK-deferrability flip inside `transferCycle`, which is reverted before returning ([`8-fk-cycle-deferred-constraints.md`](8-fk-cycle-deferred-constraints.md) NFR-8.9).
 - **FR-2.3** An optional `onProgress` callback is invoked once per table with `{ table, rowsCopied }`.
 
 ## Introspection
@@ -20,18 +20,19 @@ The v1 core. The host application has already created its schema on the target e
 ## Transfer
 
 - **FR-2.10** `topologicalSort(tables, foreignKeys)` (`src/transfer.ts`) orders tables so every parent precedes its children. It is pure and unit-tested directly.
-- **FR-2.11** Tables in a foreign-key **cycle** cannot be linearized; they are appended in original order and reported in `MigrationReport.warnings`. Proper handling (deferred constraints) is deferred — see `5-safety-and-rollback.md`.
+- **FR-2.11** Tables in a foreign-key **cycle** cannot be linearized; `topologicalSort` appends them in original order and names them in `TopoResult.cycles`. **Resolved** — `migrate` transfers that subset through `transferCycle`, inside one target transaction with the cyclic FKs deferred to commit (flipping any `NOT DEFERRABLE` constraint transiently and restoring it afterward), and reports them in `MigrationReport.deferredTables`. The old "may violate constraints" warning is gone. Full spec: [`8-fk-cycle-deferred-constraints.md`](8-fk-cycle-deferred-constraints.md).
 - **FR-2.12** `transferTable(source, target, table, onProgress?)` copies all rows of a table from source to target.
 - **FR-2.13** `applySequences(target, sequences)` calls `setval(seq, lastValue, true)` for each sequence with a non-null `lastValue`, so `nextval` continues past migrated rows. Never-advanced sequences are left fresh.
 
-## Data fidelity — current limitation and target
+## Data fidelity
 
-- **FR-2.14 (current)** v1 transfers rows via row-by-row parameterized `INSERT`: `SELECT` the rows from source, then `INSERT` each into target. This is correct for common app schemas (integers, text, booleans, timestamps).
-- **NFR-2.15 (target, deferred)** Round-tripping values through JavaScript can lose fidelity on `json`/`jsonb` (whitespace/key order), `numeric` (precision), `bytea`, and array types. The target is a `COPY … TO/FROM` **text** path that keeps each value in Postgres's own text representation end to end. File as a follow-up ticket; until then, document the limitation in release notes.
+- **FR-2.14** Rows transfer over a `COPY … TO/FROM '/dev/blob'` **TEXT** path: the source engine emits its own text representation and the target re-parses those exact bytes, so no value round-trips through a JavaScript representation. The row-by-row parameterized `INSERT` remains as a **per-table fallback** when COPY is unavailable for a table; the fallback is recorded on `TableResult.method`/`fallbackReason` and surfaced as a warning.
+- **NFR-2.15** **Resolved.** Empirical comparison across the two engines showed the `INSERT` path already preserved `jsonb`, `numeric`, `bytea`, and array types exactly; the one confirmed loss was plain `json` source text (whitespace and key order), which COPY-text fixes. COPY-text is also the general insurance for text-significant types not yet exercised. Full spec and spike findings: [`7-copy-text-transfer.md`](7-copy-text-transfer.md).
+- Stored generated columns (`GENERATED ALWAYS AS (…) STORED`) are excluded from both paths — the target recomputes them, and supplying a value errors.
 
 ## Report
 
-- **FR-2.16** `MigrationReport` contains `tables: TableResult[]`, `sequencesSet`, `totalRows`, and `warnings: string[]`.
+- **FR-2.16** `MigrationReport` contains `tables: TableResult[]`, `sequencesSet`, `totalRows`, `warnings: string[]`, `deferredTables: string[]` (FK-cycle subset, FR-2.11), and `skippedTables: string[]` (`onExisting: 'skip'`, [`14-idempotence.md`](14-idempotence.md)), plus optional `validation` ([`13-post-migration-validation.md`](13-post-migration-validation.md)) and `reconstruction` ([`9-standalone-schema-reconstruction.md`](9-standalone-schema-reconstruction.md)) sections. `src/types.ts` is the SSOT for the shape.
 
 ## Acceptance
 

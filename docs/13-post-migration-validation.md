@@ -94,26 +94,24 @@ The validation function lives in a new module (proposed `src/validate.ts`, prima
 
 ### `MigrationReport` (`src/types.ts`)
 
-Add an optional `validation` field plus supporting interfaces:
+An optional `validation` field plus supporting interfaces. **As shipped** (`src/types.ts` is the SSOT; the names below are what actually exists, reconciled against the original proposal):
 
 ```ts
 export type ValidationLevel = 'off' | 'counts' | 'full';
 
 export interface TableValidation {
   table: string;            // qualified schema.name
-  sourceRows: string;       // count(*) as string/BigInt-safe
-  targetRows: string;
-  rowsMatch: boolean;
-  sourceDigest?: string;    // present only at level 'full'
-  targetDigest?: string;
-  digestMatch?: boolean;
+  sourceRows: number;
+  targetRows: number;
+  digestMatch?: boolean;    // present only at level 'full'
+  ok: boolean;
 }
 
 export interface SequenceValidation {
   sequence: string;         // qualified schema.name
-  sourceLastValue: string;
-  targetLastValue: string;
-  consistent: boolean;      // target >= source
+  sourceValue: string | null;
+  targetValue: string | null;
+  ok: boolean;              // target >= source
 }
 
 export interface ValidationReport {
@@ -121,25 +119,24 @@ export interface ValidationReport {
   ok: boolean;              // false ⇒ caller MUST NOT swap (FR-13.4)
   tables: TableValidation[];
   sequences: SequenceValidation[];
-  mismatches: string[];     // flat, human-readable list of every failure
-}
-
-export interface MigrationReport {
-  tables: TableResult[];
-  sequencesSet: number;
-  totalRows: number;
-  warnings: string[];
-  validation?: ValidationReport;   // present when level !== 'off'
 }
 ```
 
-`MigrateOptions` gains `validation?: ValidationLevel` (default per Open Questions). Existing fields are unchanged, so current callers compile unmodified.
+`MigrateOptions` gains `validate?: ValidationLevel` (default `'counts'`) and `onValidationFailure?: 'report' | 'throw'` (default `'report'`). Existing fields are unchanged, so current callers compile unmodified.
+
+Three deliberate deviations from the original proposal above, recorded so the drift is not mistaken for an oversight:
+
+- **`ok` replaces `rowsMatch` / `consistent`.** One verdict field per row, uniform across tables and sequences, so `report.tables.filter(t => !t.ok)` is the single idiom.
+- **No `mismatches: string[]`.** The failing entries are derivable (`tables`/`sequences` filtered on `!ok`), and `migrate` already synthesizes the human-readable line — `Post-migration validation failed for: <names>.` — into `MigrationReport.warnings` and into `ValidationError.message`. A third copy would be a drift hazard. A caller wanting a flat list filters the two arrays.
+- **No `sourceDigest`/`targetDigest` strings.** Only the comparison result is kept; the digests themselves are not useful to a caller who cannot re-derive them, and they doubled the report size for `full` runs.
+
+One deviation is **not** deliberate: `sourceRows`/`targetRows` are `number`, and the underlying count is `count(*)::int`, which errors above 2³¹−1 rows rather than comparing as BigInt-safe strings as NFR-13.8's spirit and the original shape intended. Tracked as a follow-up.
 
 ### CLI (`src/cli.ts`)
 
-- A `--validate <level>` flag (`off` | `counts` | `full`), defaulting to the library default.
-- After a successful migration, print a one-line-per-table validation summary (e.g. `users: 1234 = 1234 ✓`) and an overall `Validation: OK (counts)` line.
-- On validation failure: print every entry in `validation.mismatches`, print `Validation: FAILED — target not swapped`, and exit non-zero. This is the unattended-upgrade signal: a non-zero exit means the host must keep running on the old data dir / restore the backup, never swap.
+- A `--validate <level>` flag (`off` | `counts` | `full`), defaulting to the library default. **Shipped**, plus `--strict` for `onValidationFailure: 'throw'`.
+- **Shipped, reduced:** the CLI prints a single `Validation (<level>): OK.` / `Validation (<level>): FAILED.` line and exits non-zero on failure. The failing table and sequence names reach the operator through the `warning: Post-migration validation failed for: …` line (or, under `--strict`, the thrown error's message).
+- **Not shipped:** the per-table `users: 1234 = 1234 ✓` summary, and the `Validation: FAILED — target not swapped` wording (there is no CLI swap step to suppress yet — see [`11-atomic-swap.md`](11-atomic-swap.md)). Tracked as a follow-up; a caller wanting per-table detail reads `report.validation.tables` from the library.
 
 ## Acceptance
 
