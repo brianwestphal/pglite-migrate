@@ -218,6 +218,32 @@ step_version() {
   set_state "version" "$REPLY"
 }
 
+# The curated body of the CHANGELOG's '## Unreleased' section, or empty when the
+# section is absent or holds only the placeholder.
+#
+# This exists so the two halves of the changelog stop competing. The release
+# notes have always come from gitgist/the editor, never from '## Unreleased' —
+# so nothing consumed that section and nothing cleared it, and it silently rotted
+# across releases (PGLM-96/97). Seeding the editor from it makes the hand-written
+# content part of the release, which is what makes it safe to reset afterwards.
+unreleased_body() {
+  node -e '
+    const fs = require("fs");
+    let md = "";
+    try { md = fs.readFileSync("CHANGELOG.md", "utf8"); } catch { process.exit(0); }
+    const lines = md.split("\n");
+    const start = lines.findIndex((l) => l.trim() === "## Unreleased");
+    if (start === -1) process.exit(0);
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) {
+      if (/^## /.test(lines[i])) { end = i; break; }
+    }
+    const body = lines.slice(start + 1, end).join("\n").trim();
+    if (!body || /^_?Nothing yet\.?_?$/i.test(body)) process.exit(0);
+    process.stdout.write(body);
+  ' 2>/dev/null || true
+}
+
 step_release_notes() {
   echo ""
 
@@ -245,8 +271,31 @@ step_release_notes() {
     generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
   fi
 
+  local curated
+  curated=$(unreleased_body)
+
   local initial
-  if [[ -n "$generated" ]]; then
+  if [[ -n "$curated" && -n "$generated" ]]; then
+    success "Draft ready — CHANGELOG 'Unreleased' section plus a gitgist draft."
+    initial="# Release notes. Your curated CHANGELOG '## Unreleased' section is first,
+# then a gitgist draft from the commits. Merge what you want, delete the rest.
+# '## Unreleased' is reset once this release is written, so anything you drop
+# here is dropped for good.
+# Lines starting with '#' are removed on save.
+
+${curated}
+
+# ---- gitgist draft, from the commits ----------------------------------------
+
+${generated}"
+  elif [[ -n "$curated" ]]; then
+    success "Using the CHANGELOG 'Unreleased' section as the starting point."
+    initial="# Release notes — your curated CHANGELOG '## Unreleased' section is below.
+# It is reset once this release is written, so anything you delete here is gone.
+# Lines starting with '#' are removed on save.
+
+${curated}"
+  elif [[ -n "$generated" ]]; then
     success "Draft ready — review and edit in the editor."
     initial="# Release notes — gitgist draft below. Edit freely.
 # Lines starting with '#' are removed on save.
@@ -273,23 +322,40 @@ step_update_changelog() {
 
   local entry="## [${version}] - ${date}\n\n${notes}"
 
-  node -e "
-    const fs = require('fs');
-    const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
-    const marker = changelog.indexOf('\n## [');
-    if (marker === -1) {
-      // No versioned entry yet (first release): append below any 'Unreleased'
-      // section so the new '## [version]' lands at the bottom. Later releases
-      // take the branch below and insert above the most recent version.
-      const updated = changelog.replace(/\s*$/, '') + '\n\n' + process.argv[1] + '\n';
-      fs.writeFileSync('CHANGELOG.md', updated);
-    } else {
-      const updated = changelog.slice(0, marker) + '\n' + process.argv[1] + '\n' + changelog.slice(marker);
-      fs.writeFileSync('CHANGELOG.md', updated);
-    }
-  " "$(echo -e "$entry")"
+  node -e '
+    const fs = require("fs");
+    const entry = process.argv[1];
+    let md = fs.readFileSync("CHANGELOG.md", "utf8");
 
-  success "CHANGELOG.md updated"
+    // 1. Insert the new version entry above the most recent one.
+    const marker = md.indexOf("\n## [");
+    if (marker === -1) {
+      // Unreachable in this repo now that v1.0.0 exists; retained so the script
+      // still behaves on a changelog with no versioned entry yet.
+      md = md.replace(/\s*$/, "") + "\n\n" + entry + "\n";
+    } else {
+      md = md.slice(0, marker) + "\n" + entry + "\n" + md.slice(marker);
+    }
+
+    // 2. Reset "## Unreleased". Its content just shipped inside `entry` —
+    //    step_release_notes seeds the editor from it — so leaving it in place
+    //    would describe released work as still pending. Nothing used to do this,
+    //    which is exactly how the section rotted (PGLM-96/97).
+    const lines = md.split("\n");
+    const start = lines.findIndex((l) => l.trim() === "## Unreleased");
+    if (start !== -1) {
+      let end = lines.length;
+      for (let i = start + 1; i < lines.length; i++) {
+        if (/^## /.test(lines[i])) { end = i; break; }
+      }
+      lines.splice(start + 1, end - start - 1, "", "_Nothing yet._", "");
+      md = lines.join("\n");
+    }
+
+    fs.writeFileSync("CHANGELOG.md", md);
+  ' "$(echo -e "$entry")"
+
+  success "CHANGELOG.md updated (Unreleased reset to empty)"
 }
 
 step_review() {
