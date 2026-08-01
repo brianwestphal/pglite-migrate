@@ -255,59 +255,101 @@ describe('reconstructSchema (audit regressions)', () => {
     expect(v[0].doubled).toBe(42);
   });
 
-  it('detects domains and composite types as out-of-scope (PGLM-79)', async () => {
+  it('reconstructs domains with base type, default, NOT NULL and every CHECK (FR-16.1)', async () => {
     await source.exec(`
-      CREATE DOMAIN posint AS integer CHECK (VALUE > 0);
-      CREATE TYPE pair AS (a int, b int);
-      CREATE TABLE plain (id int PRIMARY KEY);
+      CREATE DOMAIN posint AS integer NOT NULL DEFAULT 1
+        CHECK (VALUE > 0) CHECK (VALUE < 1000);
+      CREATE TABLE uses_it (x posint);
     `);
 
     const report = await reconstructSchema(source, target);
 
-    expect(report.unsupported).toContainEqual({ kind: 'domain', name: 'public.posint' });
-    expect(report.unsupported).toContainEqual({ kind: 'composite type', name: 'public.pair' });
-    // The app-class part of the schema is still rebuilt (warn is the default).
-    expect(report.tables).toEqual(['public.plain']);
+    expect(report.domains).toEqual(['public.posint']);
+    // FR-16.3: a reconstructed type must NOT also be reported as unsupported.
+    expect(report.unsupported).toEqual([]);
+
+    // The CHECKs are ENFORCED, not merely present — a domain rebuilt without
+    // its constraints is the quiet failure mode this guards.
+    await expect(target.query(`INSERT INTO uses_it (x) VALUES (0)`)).rejects.toThrow();
+    await expect(target.query(`INSERT INTO uses_it (x) VALUES (5000)`)).rejects.toThrow();
+    await target.query(`INSERT INTO uses_it (x) VALUES (42)`);
+    // DEFAULT and NOT NULL survived.
+    await target.query(`INSERT INTO uses_it DEFAULT VALUES`);
+    const { rows } = await target.query<{ x: number }>(`SELECT x FROM uses_it ORDER BY x`);
+    expect(rows.map((r) => r.x)).toEqual([1, 42]);
   });
 
-  it('KNOWN LIMITATION: warn mode still fails when a column uses a domain (PGLM-79 part 2)', async () => {
-    // Detection now fires (above), so `onUnsupported: 'error'` refuses cleanly.
-    // But `warn` proceeds by contract, and `format_type` renders the column as
-    // `posint`, which was never created. Reconstructing domains is the open
-    // scope decision in docs/9 OQ-9.5, tracked as its own ticket. Pinned here so
-    // the gap is executable rather than folklore — flip this to a passing
-    // reconstruction when part 2 lands.
+  it('reconstructs standalone composite types with attributes in order (FR-16.2)', async () => {
     await source.exec(`
-      CREATE DOMAIN posint AS integer CHECK (VALUE > 0);
-      CREATE TABLE d (x posint);
+      CREATE TYPE pair AS (a integer, b text);
+      CREATE TABLE holds (p pair);
     `);
 
-    await expect(reconstructSchema(source, target)).rejects.toThrow(/type "posint" does not exist/);
+    const report = await reconstructSchema(source, target);
+
+    expect(report.composites).toEqual(['public.pair']);
+    expect(report.unsupported).toEqual([]);
+
+    await target.query(`INSERT INTO holds (p) VALUES (ROW(1, 'x')::pair)`);
+    const { rows } = await target.query<{ a: number; b: string }>(
+      `SELECT (p).a AS a, (p).b AS b FROM holds`,
+    );
+    expect(rows[0]).toEqual({ a: 1, b: 'x' });
   });
 
-  it('leaves the target completely untouched when a domain forces an error-mode refusal (PGLM-79)', async () => {
+  it('emits a domain COLLATE clause (FR-16.6)', async () => {
+    await source.exec(`CREATE DOMAIN email AS text COLLATE "C" CHECK (VALUE LIKE '%@%')`);
+
+    await reconstructSchema(source, target);
+
+    const { rows } = await target.query<{ coll: string }>(
+      `SELECT co.collname AS coll
+         FROM pg_type t JOIN pg_collation co ON co.oid = t.typcollation
+        WHERE t.typname = 'email'`,
+    );
+    expect(rows[0]?.coll).toBe('C');
+  });
+
+  it('orders custom types so cross-kind dependencies resolve (NFR-16.7)', async () => {
+    // A domain over an enum, and a composite with a domain-typed attribute.
+    // Three separate name-ordered passes could not satisfy both; the single
+    // OID-ordered pass can, because OID order is a real dependency order.
     await source.exec(`
-      CREATE TYPE mood AS ENUM ('ok');
-      CREATE SEQUENCE sq;
-      CREATE DOMAIN posint AS integer CHECK (VALUE > 0);
-      CREATE TABLE d (x posint);
+      CREATE TYPE mood AS ENUM ('ok', 'bad');
+      CREATE DOMAIN good_mood AS mood CHECK (VALUE = 'ok');
+      CREATE TYPE tagged AS (m good_mood, note text);
+      CREATE TABLE t (x tagged);
     `);
 
-    await expect(reconstructSchema(source, target, { onUnsupported: 'error' })).rejects.toThrow(
-      /domain public\.posint/,
-    );
+    const report = await reconstructSchema(source, target);
 
-    // This is the property the bug violated: detection never fired, so error
-    // mode ran anyway and died partway with the enum and sequence already created.
-    const objects = await target.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_class c
-         JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'`,
-    );
-    expect(objects.rows[0].n).toBe(0);
-    const types = await target.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_type t
-         JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'public'`,
-    );
-    expect(types.rows[0].n).toBe(0);
+    expect(report.enums).toEqual(['public.mood']);
+    expect(report.domains).toEqual(['public.good_mood']);
+    expect(report.composites).toEqual(['public.tagged']);
+    await target.query(`INSERT INTO t (x) VALUES (ROW('ok', 'n')::tagged)`);
+    await expect(
+      target.query(`INSERT INTO t (x) VALUES (ROW('bad', 'n')::tagged)`),
+    ).rejects.toThrow();
+  });
+
+  it("excludes information_schema's built-in domains and implicit row types (NFR-16.8)", async () => {
+    await source.exec(`CREATE TABLE plain (id int PRIMARY KEY)`);
+
+    const report = await reconstructSchema(source, target);
+
+    // `plain` has an implicit composite row type in pg_type; it must not be
+    // emitted as a standalone composite, and information_schema's own domains
+    // (cardinal_number, yes_or_no, ...) must not leak in either.
+    expect(report.composites).toEqual([]);
+    expect(report.domains).toEqual([]);
+    expect(report.unsupported).toEqual([]);
+  });
+
+  it('still reports range types, which stay out of scope (NG-16.9)', async () => {
+    await source.exec(`CREATE TYPE intrange AS RANGE (subtype = integer)`);
+
+    const report = await reconstructSchema(source, target);
+
+    expect(report.unsupported).toContainEqual({ kind: 'range type', name: 'public.intrange' });
   });
 });

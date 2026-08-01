@@ -214,6 +214,10 @@ export interface ReconstructionReport {
   /** Non-`public` schemas created on the target so qualified objects can land. */
   schemas: string[];
   enums: string[];
+  /** Domain types recreated with their base type, default, NOT NULL, collation and CHECKs. */
+  domains: string[];
+  /** Standalone composite types recreated with their attributes in physical order. */
+  composites: string[];
   sequences: string[];
   tables: string[];
   constraints: string[];

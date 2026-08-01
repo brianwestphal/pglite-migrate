@@ -32,17 +32,17 @@ function numericLiteral(value: string, field: string): string {
 
 /**
  * Reconstruct the app-class schema of `source` onto `target` (the no-host-app
- * "standalone" path). Emits DDL in dependency order — schemas → enums →
+ * "standalone" path). Emits DDL in dependency order — schemas → custom types →
  * sequences → tables (+ defaults) → sequence ownership → constraints → indexes —
  * using PostgreSQL's own `pg_get_*def` functions, which run inside PGlite (no
  * `pg_dump` binary).
  *
- * Scope is app-class objects only (tables, columns, custom enums, sequences,
- * PK/UNIQUE/CHECK/FK, indexes). Out-of-scope objects — views, materialized
- * views, partitioned and foreign tables, domains and composite types,
- * functions, triggers, RLS policies, rules, operator classes, collations,
- * comments, grants, and extensions — are **detected and reported**, never
- * silently dropped. See `docs/9`.
+ * Scope is app-class objects only: tables, columns, custom types (enums,
+ * domains, composites — `docs/16`), sequences, PK/UNIQUE/CHECK/FK, and indexes.
+ * Out-of-scope objects — views, materialized views, partitioned and foreign
+ * tables, range types, functions, triggers, RLS policies, rules, operator
+ * classes, collations, comments, grants, and extensions — are **detected and
+ * reported**, never silently dropped. See `docs/9`.
  *
  * `options.onUnsupported` (default `warn`) controls what happens when the source
  * has out-of-scope objects: `warn` rebuilds the app-class schema anyway and
@@ -70,14 +70,24 @@ export async function reconstructSchema(
   // Schemas first: every qualified CREATE below lands inside one, and only
   // `public` is guaranteed to exist on a fresh target (PGLM-76).
   const schemas = await reconstructSchemas(source, target);
-  const enums = await reconstructEnums(source, target);
+  const { enums, domains, composites } = await reconstructCustomTypes(source, target);
   const sequences = await reconstructSequences(source, target);
   const tables = await reconstructTables(source, target);
   // Ownership is re-linked only once the owning tables exist (PGLM-78).
   await reconstructSequenceOwnership(source, target);
   const constraints = await reconstructConstraints(source, target);
   const indexes = await reconstructIndexes(source, target);
-  return { schemas, enums, sequences, tables, constraints, indexes, unsupported };
+  return {
+    schemas,
+    enums,
+    domains,
+    composites,
+    sequences,
+    tables,
+    constraints,
+    indexes,
+    unsupported,
+  };
 }
 
 /**
@@ -103,24 +113,145 @@ async function reconstructSchemas(source: PGliteLike, target: PGliteLike): Promi
   return created;
 }
 
-async function reconstructEnums(source: PGliteLike, target: PGliteLike): Promise<string[]> {
-  const { rows } = await source.query<{ schema: string; name: string; labels: string[] }>(
-    `SELECT n.nspname AS schema, t.typname AS name,
-            array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+/** The three custom-type kinds reconstruction emits, bucketed for the report. */
+interface CustomTypes {
+  enums: string[];
+  domains: string[];
+  composites: string[];
+}
+
+/** One user-declared custom type, as read from `pg_type`. */
+interface ReconType {
+  oid: number;
+  schema: string;
+  name: string;
+  kind: 'e' | 'd' | 'c';
+  /** Enum labels in sort order; empty for other kinds. */
+  labels: string[] | null;
+  /** Domain base type via `format_type`; null for other kinds. */
+  base: string | null;
+  notnull: boolean;
+  default_expr: string | null;
+  collation: string | null;
+  collation_schema: string | null;
+}
+
+/**
+ * Recreate the source's user-declared custom types: enums, domains, and
+ * standalone composites (`docs/16`).
+ *
+ * All three kinds are emitted in **one pass ordered by `pg_type.oid`**, which is
+ * a genuine dependency order rather than a heuristic: a type cannot be defined
+ * over one that does not exist yet, and creation assigns increasing OIDs, so
+ * every dependency has a lower OID than its dependant. That is what makes the
+ * cross-kind cases work — a domain over an enum, a composite with a
+ * domain-typed attribute, a domain over another domain — which three separate
+ * name-ordered passes could not (NFR-16.7).
+ *
+ * Excluded: `information_schema`'s built-in domains, and the implicit composite
+ * row type every table, view and sequence carries in `pg_type` (NFR-16.8).
+ */
+async function reconstructCustomTypes(
+  source: PGliteLike,
+  target: PGliteLike,
+): Promise<CustomTypes> {
+  const { rows } = await source.query<ReconType>(
+    `SELECT t.oid::int AS oid, n.nspname AS schema, t.typname AS name, t.typtype AS kind,
+            CASE WHEN t.typtype = 'e' THEN (
+              SELECT array_agg(e.enumlabel ORDER BY e.enumsortorder)
+                FROM pg_enum e WHERE e.enumtypid = t.oid
+            ) END AS labels,
+            CASE WHEN t.typtype = 'd'
+                 THEN format_type(t.typbasetype, t.typtypmod) END AS base,
+            t.typnotnull AS notnull,
+            pg_get_expr(t.typdefaultbin, 0) AS default_expr,
+            co.collname AS collation,
+            cn.nspname AS collation_schema
        FROM pg_type t
        JOIN pg_namespace n ON n.oid = t.typnamespace
-       JOIN pg_enum e ON e.enumtypid = t.oid
+       LEFT JOIN pg_collation co ON co.oid = t.typcollation AND t.typtype = 'd'
+       LEFT JOIN pg_namespace cn ON cn.oid = co.collnamespace
       WHERE ${SYS}
-      GROUP BY n.nspname, t.typname
-      ORDER BY n.nspname, t.typname`,
+        AND t.typtype IN ('e', 'd', 'c')
+        -- A standalone composite has a pg_class entry of relkind 'c'; a table's
+        -- implicit row type points at the table itself and must not be emitted.
+        AND (t.typtype <> 'c'
+             OR EXISTS (SELECT 1 FROM pg_class c
+                         WHERE c.oid = t.typrelid AND c.relkind = 'c'))
+      ORDER BY t.oid`,
   );
-  const created: string[] = [];
-  for (const r of rows) {
-    const labels = r.labels.map((l) => quoteLiteral(l)).join(', ');
-    await target.exec(`CREATE TYPE ${quoteQualified(r.schema, r.name)} AS ENUM (${labels})`);
-    created.push(tableKey(r));
+
+  const checks = await domainChecks(source);
+  const out: CustomTypes = { enums: [], domains: [], composites: [] };
+
+  for (const t of rows) {
+    const qualified = quoteQualified(t.schema, t.name);
+    if (t.kind === 'e') {
+      const labels = (t.labels ?? []).map((l) => quoteLiteral(l)).join(', ');
+      await target.exec(`CREATE TYPE ${qualified} AS ENUM (${labels})`);
+      out.enums.push(tableKey(t));
+    } else if (t.kind === 'd') {
+      await target.exec(domainDef(qualified, t, checks.get(t.oid) ?? []));
+      out.domains.push(tableKey(t));
+    } else {
+      await target.exec(`CREATE TYPE ${qualified} AS (${await compositeAttrs(source, t.oid)})`);
+      out.composites.push(tableKey(t));
+    }
   }
-  return created;
+  return out;
+}
+
+/**
+ * Domain CHECK constraints, keyed by the domain's oid.
+ *
+ * Joined on `contypid` — the *type* a constraint belongs to. `conrelid` is for
+ * table constraints and is 0 here. The filter runs on the domain's namespace,
+ * not the constraint's, or `information_schema`'s own built-in domain checks
+ * (`cardinal_number`, `yes_or_no`, …) come back too.
+ */
+async function domainChecks(source: PGliteLike): Promise<Map<number, string[]>> {
+  const { rows } = await source.query<{ oid: number; name: string; def: string }>(
+    `SELECT t.oid::int AS oid, con.conname AS name, pg_get_constraintdef(con.oid) AS def
+       FROM pg_constraint con
+       JOIN pg_type t ON t.oid = con.contypid
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE con.contype = 'c' AND ${SYS}
+      ORDER BY t.oid, con.conname`,
+  );
+  const byType = new Map<number, string[]>();
+  for (const r of rows) {
+    const clause = `CONSTRAINT ${quoteIdent(r.name)} ${r.def}`;
+    byType.set(r.oid, [...(byType.get(r.oid) ?? []), clause]);
+  }
+  return byType;
+}
+
+/** Assemble a `CREATE DOMAIN` statement. */
+function domainDef(qualified: string, t: ReconType, checks: string[]): string {
+  const parts = [`CREATE DOMAIN ${qualified} AS ${t.base ?? 'text'}`];
+  // Emitted deliberately even though NG-9.10 puts collations out of scope:
+  // dropping it would silently change comparison and sort semantics for every
+  // column of this domain. See docs/16 § Collation.
+  if (t.collation !== null && t.collation_schema !== null) {
+    parts.push(`COLLATE ${quoteQualified(t.collation_schema, t.collation)}`);
+  }
+  if (t.default_expr !== null) parts.push(`DEFAULT ${t.default_expr}`);
+  if (t.notnull) parts.push('NOT NULL');
+  parts.push(...checks);
+  return parts.join(' ');
+}
+
+/** Render a standalone composite's attributes in physical order. */
+async function compositeAttrs(source: PGliteLike, typeOid: number): Promise<string> {
+  const { rows } = await source.query<{ name: string; type: string }>(
+    `SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type
+       FROM pg_type t
+       JOIN pg_attribute a ON a.attrelid = t.typrelid
+      WHERE t.oid = ${typeOid.toString()}
+        AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY a.attnum`,
+  );
+  return rows.map((r) => `${quoteIdent(r.name)} ${r.type}`).join(', ');
 }
 
 interface ReconSequence {
@@ -345,17 +476,15 @@ const DETECTORS: readonly Detector[] = [
            WHERE c.relkind IN ('v', 'm', 'p', 'f') AND ${SYS}`,
   },
   {
-    // Domains (typrelid = 0) and standalone composites (their pg_class entry is
-    // relkind 'c'). Excludes the implicit row type every table/view/sequence
-    // gets, which is a composite in pg_type but not a user-declared one.
+    // Custom-type kinds that are still out of scope. Enums, domains and
+    // composites are reconstructed (docs/16), so they are deliberately absent:
+    // reporting a type as "not recreated" while recreating it would be worse
+    // than either behavior alone (FR-16.3). Ranges remain reported.
     label: 'type',
-    sql: `SELECT CASE t.typtype WHEN 'd' THEN 'domain' ELSE 'composite type' END AS kind,
+    sql: `SELECT CASE t.typtype WHEN 'r' THEN 'range type' ELSE 'type' END AS kind,
                  n.nspname || '.' || t.typname AS name
             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-           WHERE t.typtype IN ('d', 'c') AND ${SYS}
-             AND (t.typrelid = 0
-                  OR EXISTS (SELECT 1 FROM pg_class c
-                              WHERE c.oid = t.typrelid AND c.relkind = 'c'))`,
+           WHERE t.typtype = 'r' AND ${SYS}`,
   },
   {
     label: 'function',

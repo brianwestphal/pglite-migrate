@@ -71,11 +71,12 @@ All docs live in `docs/`. Requirements are numbered for linear reading (`docs/N-
 - `docs/13-post-migration-validation.md` — detailed spec: validation that gates the swap (FR-5.4)
 - `docs/14-idempotence.md` — detailed spec: re-run safety (FR-5.6)
 - `docs/15-engine-acquisition.md` — detailed spec: opt-in downloading of a missing engine (pinned registry, hash verification, keep/ephemeral caching)
+- `docs/16-custom-types.md` — detailed spec: reconstructing enums, domains and composite types (resolves doc 9 OQ-9.5)
 - `docs/ARCHITECTURE.md` — components and data flow
 - `docs/ai/code-summary.md` — codebase map + "where do I look to…" index
 - `docs/ai/requirements-summary.md` — synthesized requirements view with status markers
 
-Docs 7–15 are **detailed, per-feature specs** (originally design-only for deferred capabilities; all are now implemented); docs 1–6 remain the high-level overview. Keep both in sync when implementing.
+Docs 7–16 are **detailed, per-feature specs** (originally design-only for deferred capabilities; all are now implemented); docs 1–6 remain the high-level overview. Keep both in sync when implementing.
 
 **When making changes, keep docs in sync** — update the relevant requirements doc and both AI summaries in the same pass.
 
@@ -165,7 +166,6 @@ Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what 
 - **Upsert/`ON CONFLICT` re-run strategy** — needs PK/unique introspection (`docs/14`).
 - **CLI orchestration of the full backup→migrate→validate→swap on-startup-upgrade flow**, stale-`.new` cleanup, reflink backup fast-path (`docs/10`/`docs/11`).
 - **Open product decisions** flagged in docs 7–14 (backup default-on, identity-vs-serial normalization, validation throw-vs-report, etc.).
-- **Reconstructing domains/composites (PGLM-92)** — detection ships and `onUnsupported: 'error'` refuses cleanly, but under the default `warn` a source whose column *uses* a domain still fails. Open scope decision (`docs/9` OQ-9.5), pinned by a `KNOWN LIMITATION` test.
 
 The PGLM-74 audit's other 16 follow-ups (PGLM-76…91) are **done**: standalone reconstruction's four gaps, complete NG-9.10 unsupported-object detection, `MigrationReport.onExisting`/`truncatedTables`, the bounded `hasRows` probe, bigint-safe counts, the shared `src/fsutil.ts` helpers, `tableKey`/`objectKey` routing, per-table CLI validation output, the partially-populated-target and sequential-swap tests, the branch-coverage pass, and the `max-len` lint gate (PGLM-88 — resolved as an ESLint rule rather than a formatter; no new dependency, and CI's existing `npm run lint` step enforces it).
 

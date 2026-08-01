@@ -1,6 +1,6 @@
 # 9 — Standalone Schema Reconstruction (Detailed Spec)
 
-**Status: Implemented (PGLM-25; spike PGLM-24). The four gaps found by the PGLM-74 audit are fixed (PGLM-76…80); one scope decision remains open — see [Known gaps](#known-gaps-in-the-shipped-implementation).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
+**Status: Implemented (PGLM-25; spike PGLM-24). The four gaps found by the PGLM-74 audit are fixed (PGLM-76…80), and OQ-9.5 is resolved — domains and composites are now reconstructed, see [`16-custom-types.md`](16-custom-types.md).** This document is the implementation-ready specification that expands the high-level overview in [`3-schema-reconstruction.md`](./3-schema-reconstruction.md); that doc stays as the short overview, this one drives the build.
 
 ## Known gaps in the shipped implementation
 
@@ -13,14 +13,14 @@ Each of these reproduced a real failure against an in-memory PGlite pair before 
 | Non-`public` schemas were never created on the target, so a multi-schema source died with `schema "app" does not exist`. | OQ-9.6, NFR-9.9 | `reconstructSchemas` runs first and emits `CREATE SCHEMA IF NOT EXISTS` for every non-system, non-`public` schema. Reported as `ReconstructionReport.schemas`. |
 | `CREATE SEQUENCE` was emitted bare, losing start/increment/min/max/cycle. | FR-9.5 | `reconstructSequences` reads `pg_sequence` and emits `AS <type> INCREMENT BY … MINVALUE … MAXVALUE … START WITH … [NO] CYCLE`. Bounds are validated as integers before being spliced (they are literals, not identifiers, so `src/ident.ts` does not apply). |
 | `OWNED BY` was never re-established, orphaning a `serial` column's sequence. | FR-9.5 | `reconstructSequenceOwnership` replays `pg_depend` deptype `'a'` links as `ALTER SEQUENCE … OWNED BY`, after tables exist. Identity columns are unaffected — their sequence is implicit. |
-| Domains and composite types were neither reconstructed nor reported, so reconstruction died mid-run leaving a partially-built target and bypassing `onUnsupported: 'error'`. | FR-9.6 | `detectUnsupported` now inspects `pg_type` for `typtype IN ('d','c')`, excluding the implicit row type every table/view/sequence carries. `error` mode refuses with the target at **zero** objects. |
-| `detectUnsupported` covered 6 of the ~13 classes NG-9.10 enumerates. | FR-9.6 | Now table-driven (`DETECTORS`) and covers all of them: views, materialized views, partitioned **and foreign** tables, domains, composite types, functions, triggers, policies, rules, operator classes, collations, comments, grants, and extensions. A view's implicit `_RETURN` rule and row type are not double-reported; `plpgsql` is not reported as a source-added extension. |
+| Domains and composite types were neither reconstructed nor reported, so reconstruction died mid-run leaving a partially-built target and bypassing `onUnsupported: 'error'`. | FR-9.6 | Fixed in two steps: PGLM-79 made them **detected** (so `error` mode refuses with the target at zero objects), and PGLM-92 made them **reconstructed** ([`16-custom-types.md`](16-custom-types.md)), so they no longer appear in `unsupported` at all. |
+| `detectUnsupported` covered 6 of the ~13 classes NG-9.10 enumerates. | FR-9.6 | Now table-driven (`DETECTORS`) and covers all of them: views, materialized views, partitioned **and foreign** tables, range types, functions, triggers, policies, rules, operator classes, collations, comments, grants, and extensions. (Domains and composites were detected here too until PGLM-92 moved them into scope.) A view's implicit `_RETURN` rule and row type are not double-reported; `plpgsql` is not reported as a source-added extension. |
 
-### Still open — OQ-9.5, reconstructing domains and composites
+### Resolved — OQ-9.5, reconstructing domains and composites
 
-Detection is complete, so `onUnsupported: 'error'` is now correct for every class. But under the default `warn`, a source whose **column uses** a domain still fails with `type "posint" does not exist`, because `format_type` renders the column's type faithfully and the type was never created.
+**Closed (PGLM-92).** Both domains and composites are now reconstructed, satisfying the rest of **FR-9.4**. Probing the catalogs showed both are trivially derivable — the qualifier OQ-9.5 attached to the recommendation — so there was no principled reason to include one and not the other. They are correspondingly no longer reported as unsupported.
 
-That is the unresolved half of **FR-9.4** ("composite/domain types if trivially emittable") and **OQ-9.5**. It is a scope decision, not a defect: emitting domains is cheap (`pg_type` + `pg_constraint`), composites less so, and either way they would have to be removed from the unsupported list rather than reported *and* rebuilt. The current behavior is pinned by an explicit `KNOWN LIMITATION` test so the gap is executable rather than folklore. Tracked as its own ticket.
+Full spec, including the OID-ordering argument and how a domain's `COLLATE` clause interacts with NG-9.10, is in [`16-custom-types.md`](16-custom-types.md).
 
 ## Motivation / Problem
 
@@ -151,7 +151,7 @@ Following [`6-testing.md`](./6-testing.md)'s double-coverage philosophy (pure lo
 - **OQ-9.2 — `onUnsupported` default.** ~~Fatal or warn-and-continue when an out-of-scope object is present?~~ **Resolved (PGLM-38):** default `'warn'` (rebuild app-class schema and report), `'error'` opt-in for strict environments (throws before any DDL). Never silent (FR-9.6).
 - **OQ-9.3 — Options surface.** Boolean `reconstructSchema` vs a `mode: 'app-driven' | 'standalone'` enum on `MigrateOptions`? *Recommended:* `mode` enum — clearer intent and room for future modes; CLI flag `--reconstruct-schema`/`--standalone` maps onto it.
 - **OQ-9.4 — Identity vs serial columns.** Reproduce `GENERATED … AS IDENTITY` faithfully, or normalize all auto-increment to `serial`-style `nextval` defaults? *Recommended:* preserve identity where the source uses it (it round-trips through `pg_get_*`), falling back to `nextval` defaults only if a major lacks the needed catalog support.
-- **OQ-9.5 — Composite/domain types.** In scope as "custom types," or report-only beyond enums? *Recommended:* enums are firmly in; emit composite/domain only if trivially derivable, otherwise treat as unsupported-and-reported to keep the scope line crisp.
+- **OQ-9.5 — Composite/domain types.** ~~In scope as "custom types," or report-only beyond enums?~~ **Resolved (PGLM-92):** both are reconstructed. The recommendation's qualifier — "only if trivially derivable" — turned out to hold for both, verified against the catalogs. See [`16-custom-types.md`](16-custom-types.md).
 - **OQ-9.6 — Cross-schema scope.** Reconstruct every non-system schema, or only `public` / a caller-selected set? *Recommended:* mirror `introspectSchema` (all non-system schemas via `SYSTEM_SCHEMA_FILTER`), and create the schemas themselves (`CREATE SCHEMA IF NOT EXISTS`) as a pre-phase.
 
 ## Follow-up tickets
