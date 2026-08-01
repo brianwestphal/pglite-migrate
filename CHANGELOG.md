@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Custom types are reconstructed, not just enums.** Standalone reconstruction
+  now rebuilds **domains** (base type, `DEFAULT`, `NOT NULL`, `COLLATE`, and every
+  `CHECK`, with constraint names preserved), **composite types**, and **range
+  types** — completing the category that previously stopped at enums. All type
+  kinds are emitted in a single dependency-safe pass, so a domain over an enum, a
+  composite with a domain-typed attribute, or a range over a domain all land
+  correctly. See `docs/16-custom-types.md` and `docs/17-range-types.md`.
+
 - **Engine acquisition.** `pglite-migrate` can now fetch the old PGlite engine a
   data directory needs, instead of requiring every consumer to install one under
   an npm alias. An application typically bundles only the engine it was built
@@ -33,12 +41,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `npm install` line for a version that would work. Available to library callers
   as `assertEngineMatchesDataDir`.
 
+- **The migration report says what a re-run actually did.** `MigrationReport`
+  gains `onExisting` (the resolved policy, including the default) and
+  `truncatedTables` — the only record that a destructive re-run discarded data.
+  Previously an `onExisting: 'truncate'` run was indistinguishable from a clean
+  first run.
+
+- **Reconstruction reports what it created**, per object class:
+  `ReconstructionReport` gains `schemas`, `domains`, `composites` and `ranges`
+  alongside the existing buckets.
+
+- **Per-table validation output on the CLI.** A failed `--validate` run now prints
+  the source-vs-target counts for every table and sequence before the verdict, so
+  an operator sees *by how much* something diverged rather than only which table.
+  A passing run stays quiet.
+
 ### Changed
+
+- **Out-of-scope object detection is complete.** Standalone reconstruction
+  reported 6 of the ~13 object classes it declares out of scope; it now covers all
+  of them — views, materialized views, partitioned and foreign tables, functions,
+  triggers, RLS policies, rules, operator classes, collations, comments, grants
+  and extensions. `--on-unsupported error` is only as trustworthy as this list, so
+  the gaps meant a "clean" pass could still lose objects silently.
 
 - A missing engine now reports the detected major, the exact install command,
   and the opt-in flag instead of a bare `ERR_MODULE_NOT_FOUND`.
 
+- The non-empty-target probe is now a bounded existence check rather than a full
+  `count(*)` scan per table.
+
 ### Fixed
+
+- **Multi-schema sources failed outright.** Reconstruction emitted qualified DDL
+  without ever creating the schema, so any source using a non-`public` schema died
+  with `schema "…" does not exist` — even though introspection deliberately covers
+  every non-system schema.
+
+- **Sequences lost their defining parameters.** `CREATE SEQUENCE` was emitted bare,
+  so a source declaring `START 100 INCREMENT 5 MAXVALUE 900 CYCLE` reconstructed as
+  a plain default sequence. Quiet in the common `serial` case, because sequence
+  realignment masks it — but a cycling or strided sequence silently changed
+  behavior on the target.
+
+- **`OWNED BY` was never re-established**, orphaning a `serial` column's sequence:
+  inserts still worked, so the omission hid, but dropping the table left the
+  sequence behind and `pg_get_serial_sequence` returned null.
+
+- **A domain- or composite-typed column crashed reconstruction mid-run**, leaving a
+  partially-built target and bypassing `onUnsupported: 'error'` — whose entire
+  purpose is to refuse *before* any DDL runs. Both kinds are now reconstructed.
+
+- **A range type's five auto-created constructor functions were reported as
+  unsupported user functions.** Under `--on-unsupported error` that would refuse an
+  otherwise valid migration for objects the source never declared.
+
+- **Row counts errored above 2³¹ rows.** `count(*)` was cast to `int`; it is now
+  read as text and parsed, so the only remaining ceiling is JavaScript's exact
+  integer range.
+
+- **A failed COPY could mask its own cause.** When the row-by-row `INSERT` fallback
+  also failed, only the fallback's error escaped — which inside a foreign-key cycle
+  is a bare `current transaction is aborted` naming neither the real failure nor the
+  table. Both errors are now reported, with the fallback's retained as `cause`.
 
 - `openDataDir` now imports absolute engine paths via `pathToFileURL`, which
   previously would have failed on Windows.
@@ -46,18 +111,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   that escape, appending a second confusing error after the real one and
   bypassing the exit code it had already decided on.
 
----
+## [1.0.0] - 2026-06-20
 
 - Initial development release. The app-driven, data-only migration path
   (introspect → topological sort → COPY-text transfer → sequence realignment)
   runs end to end across a real PG17 → PG18 pair, alongside standalone schema
   reconstruction, FK-cycle handling, and the backup / dry-run / validation /
   atomic-swap safety layer.
-
-## [1.0.0] - 2026-06-20
-
-
-Updated gitgist to 1.0.0
+- Updated gitgist to 1.0.0.
 
 ## [0.0.2] - 2026-06-17
 
