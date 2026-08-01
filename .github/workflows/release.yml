@@ -32,6 +32,9 @@ env:
   # bundled npm (its `@npmcli/arborist` is missing `promise-retry`), which
   # crashes any `npm install -g` before it can replace itself. Bumping back
   # to a major-version range (`'22'`) is safe once 22.22.2 ages out.
+  #
+  # This pin is coupled to the npm version installed in `npm-publish` below —
+  # read that comment before changing either one.
   NODE_VERSION: '22.21.0'
 
 jobs:
@@ -170,7 +173,19 @@ jobs:
           node-version: '${{ env.NODE_VERSION }}'
           cache: npm
           registry-url: 'https://registry.npmjs.org/'
-      - run: npm install -g npm@latest   # trusted publishing OIDC needs npm ≥ 11.5.1
+      # OIDC trusted publishing needs npm >= 11.5.1, so the runner's bundled npm
+      # (10.9.4) has to be replaced. Pinned to the 11 line rather than `@latest`:
+      # npm 12 raised its floor to `^22.22.2 || ^24.15.0 || >=26.0.0`, and
+      # NODE_VERSION is deliberately held at 22.21.0 (see the env block), so
+      # `@latest` fails EBADENGINE before it installs anything. That is what
+      # broke the v2.0.0 publish — nothing in this repo changed, npm simply cut
+      # a major with a higher engine requirement, and an unpinned `@latest`
+      # picked it up. npm 11.x requires `^20.17.0 || >=22.9.0` and satisfies the
+      # trusted-publishing floor comfortably.
+      #
+      # Revisit together with NODE_VERSION: once the Node pin can move to a
+      # release satisfying npm 12's floor, this can widen again.
+      - run: npm install -g npm@^11
       - run: npm ci
       - name: Bump package.json to beta version (ephemeral, not committed)
         if: needs.detect.outputs.is_beta == 'true'
