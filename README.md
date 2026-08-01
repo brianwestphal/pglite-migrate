@@ -15,11 +15,14 @@ PGlite is PostgreSQL compiled to WASM. Its data directory is a real PostgreSQL c
 A PG18 PGlite engine **physically cannot open** a PG17 data directory — that's the failure this library exists to bridge (and the e2e suite proves it on disk). `pglite-migrate` is the connective tissue for the PGlite, data-directory, cross-major case that the ecosystem doesn't otherwise cover.
 
 - **Genuinely cross-major.** The test matrix runs a real **PG17 → PG18** migration (PGlite `0.4.x` → `0.5.x`), not a same-version round-trip.
-- **App-driven or standalone.** Let your app create the target schema and just copy the data, *or* have pglite-migrate **reconstruct the app-class schema** (tables, columns, sequences, enums, PK/FK/unique/check, indexes) from the source when there's no host app.
+- **App-driven or standalone.** Let your app create the target schema and just copy the data, *or* have pglite-migrate **reconstruct the app-class schema** from the source when there's no host app — schemas, tables, columns, sequences (with their start/increment/cycle and `OWNED BY` links), custom types, PK/FK/unique/check constraints, and indexes.
+- **Custom types, not just enums.** Enums, **domains** (base type, default, `NOT NULL`, `COLLATE`, and every `CHECK`), **composite types**, and **range types** are all rebuilt, in a dependency-safe order — so a domain over an enum, or a range over a domain, lands correctly.
 - **Fidelity-first transfer.** Rows move via PostgreSQL **`COPY` (text format)** with a per-table `INSERT` fallback, preserving `json`/`jsonb`, `numeric`, `bytea`, arrays and `timestamptz` exactly. Sequences are realigned with `setval` so the next inserted id is correct.
 - **Handles the hard cases.** Foreign keys are topologically ordered so parents load before children, and **FK cycles** transfer correctly inside a deferred-constraint transaction.
 - **Safe by construction.** Optional source **backup**, a **dry-run** that provably writes nothing, post-migration **validation** (row-count parity, sequence consistency, or full content digests), **idempotent re-runs** (`error` / `truncate` / `skip`), and an atomic write-new-then-rename **swap** primitive.
 - **Bring only the new engine.** Opt in and pglite-migrate will **fetch the old engine** your data directory needs — pinned version, hash-verified against a checksum shipped in this package, cached between runs. No second alias to wire up.
+- **Errors that tell you what to do.** Point the wrong engine at a data directory and you get the directory, both majors, the engine you named, and the exact `npm install` line that fixes it — instead of PGlite's opaque `failed to initialize properly`.
+- **Nothing disappears quietly.** Anything outside the app-class scope line — views, matviews, triggers, functions, RLS policies, rules, comments, grants, extensions — is **detected and reported** during reconstruction, and `--on-unsupported error` refuses before touching the target.
 
 ## Install
 
@@ -84,11 +87,17 @@ pglite-migrate <source-data-dir> <target-data-dir> [options]
 | Option | Description |
 | --- | --- |
 | `--source-engine <pkg>` / `--target-engine <pkg>` | npm module/alias for each engine (default `@electric-sql/pglite`) |
+| `--fetch-missing-engine` | Download a pinned engine when the named one is not installed (off by default) |
+| `--engine-cache <mode>` | Retention for a downloaded engine: `keep` \| `ephemeral` (default `keep`) |
+| `--engine-cache-dir <path>` | Where to store downloaded engines (default: an OS cache directory) |
 | `--validate <level>` | Post-migration check: `off` \| `counts` \| `full` (default `counts`) |
+| `--strict` | On validation failure, throw a `ValidationError` (default: report + exit non-zero) |
 | `--on-existing <mode>` | Non-empty target: `error` \| `truncate` \| `skip` (default `error`) |
-| `--reconstruct-schema` | Rebuild the source's app-class schema on an empty target first |
+| `--reconstruct-schema` | Rebuild the source's app-class schema on an empty target first (alias `--standalone`) |
+| `--on-unsupported <mode>` | With `--reconstruct-schema`, on out-of-scope objects: `warn` \| `error` (default `warn`) |
 | `--dry-run` | Report the plan without writing anything |
 | `--backup` / `--backup-dir <path>` | Back up the source data dir before migrating |
+| `--keep <n>` | Retain at most `n` timestamped backups; prune the oldest (default: keep all) |
 
 ## Demos
 
@@ -105,7 +114,11 @@ clip opens with a title card for the concept, then types the command and reveals
 </p>
 
 <p align="center">
-  <img src="assets/demos/standalone.svg" alt="Standalone: pglite-migrate ./data-pg17 ./data-pg18 --reconstruct-schema — rebuilds the schema then transfers 8 rows across 2 tables. Validation (counts): OK.">
+  <img src="assets/demos/standalone.svg" alt="Standalone: pglite-migrate ./data-pg17 ./data-pg18 --reconstruct-schema — rebuilds the schema, transfers 8 rows across 2 tables, and warns that the source's view public.recent_books was not reconstructed. Validation (counts): OK.">
+</p>
+
+<p align="center">
+  <img src="assets/demos/engine-mismatch.svg" alt="Diagnostics: pglite-migrate ./data-pg17 ./data-pg18 --source-engine pglite-new — the source data directory is PostgreSQL 17 but the engine opened for it could not read it; open it with an engine that bundles PostgreSQL 17, e.g. npm install @electric-sql/pglite@0.4.6, or pass --fetch-missing-engine.">
 </p>
 
 <p align="center">
@@ -114,9 +127,9 @@ clip opens with a title card for the concept, then types the command and reveals
 
 ## Scope
 
-**In scope — app-class schemas:** tables, columns (including generated/identity), sequences, enums, primary/foreign/unique/check constraints, and indexes; data fidelity for the common types.
+**In scope — app-class schemas:** schemas, tables, columns (including generated/identity), sequences (with their defining parameters and ownership), custom types (enums, domains, composites, ranges), primary/foreign/unique/check constraints, and indexes; data fidelity for the common types.
 
-**Out of scope — full `pg_dump` parity:** views, materialized views, triggers, functions, RLS policies, and partitioning. During standalone reconstruction these are **detected and reported**, never silently dropped.
+**Out of scope — full `pg_dump` parity:** views, materialized views, partitioned and foreign tables, triggers, functions, RLS policies, rules, operator classes, collations, comments, grants, and extensions. During standalone reconstruction these are **detected and reported**, never silently dropped — and `--on-unsupported error` refuses before touching the target.
 
 ## How it compares
 
@@ -129,7 +142,7 @@ clip opens with a title card for the concept, then types the command and reveals
 
 ## Documentation
 
-Full requirements and design specs live in [`docs/`](./docs) (numbered for linear reading). Start with [`docs/1-overview.md`](./docs/1-overview.md) and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md); the per-feature specs (COPY-text transfer, FK cycles, standalone reconstruction, backup, atomic swap, dry-run, validation, idempotence) are docs 7–14.
+Full requirements and design specs live in [`docs/`](./docs) (numbered for linear reading). Start with [`docs/1-overview.md`](./docs/1-overview.md) and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md); the per-feature specs (COPY-text transfer, FK cycles, standalone reconstruction, backup, atomic swap, dry-run, validation, idempotence, engine acquisition, custom types, range types) are docs 7–17.
 
 ## License
 

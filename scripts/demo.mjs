@@ -50,6 +50,12 @@ CREATE TABLE books (
   price numeric(8, 2),
   published_at timestamptz
 );
+
+-- Out of scope for reconstruction on purpose: the standalone demo's whole point
+-- is that pglite-migrate *reports* what it did not rebuild rather than dropping
+-- it silently. Invisible to the other demos, which do no DDL on the target.
+CREATE VIEW recent_books AS
+  SELECT title FROM books WHERE published_at > '2000-01-01';
 `;
 
 const SEED_SQL = `
@@ -89,7 +95,7 @@ function runCli(argv, replacements = {}) {
 const ENGINES = ['--source-engine', 'pglite-old', '--target-engine', 'pglite-new'];
 
 /**
- * The four demos. `capture(root)` provisions a fresh pair of data dirs and
+ * The demos. `capture(root)` provisions a fresh pair of data dirs and
  * returns the real CLI output lines; `cmd` is the clean command a user actually
  * types (the alias flags are a harness detail and are omitted from the typing).
  */
@@ -123,7 +129,7 @@ const DEMOS = [
   {
     slug: 'standalone',
     title: { eyebrow: 'Standalone', headline: 'Rebuild the schema, then migrate',
-      subtitle: 'No host app? Reconstruct the app-class schema from the source first.' },
+      subtitle: 'No host app? Reconstruct the app-class schema — and hear about anything it could not.' },
     cmd: 'pglite-migrate ./data-pg17 ./data-pg18 --reconstruct-schema',
     async capture(root) {
       const src = join(root, 'src');
@@ -131,6 +137,25 @@ const DEMOS = [
       await provision(PGliteOld, src, SCHEMA_SQL, SEED_SQL);
       await provision(PGliteNew, tgt); // empty PG18 cluster, no schema
       return runCli([src, tgt, '--reconstruct-schema', ...ENGINES], paths(src, tgt));
+    },
+  },
+  {
+    slug: 'engine-mismatch',
+    title: { eyebrow: 'Diagnostics', headline: 'Wrong engine? Told precisely.',
+      subtitle: 'The failure this tool exists to bridge — named, not left as an opaque crash.' },
+    cmd: 'pglite-migrate ./data-pg17 ./data-pg18 --source-engine pglite-new',
+    async capture(root) {
+      const src = join(root, 'src');
+      const tgt = join(root, 'tgt');
+      await provision(PGliteOld, src, SCHEMA_SQL, SEED_SQL); // PG17 source
+      await provision(PGliteNew, tgt, SCHEMA_SQL);
+      // Deliberately point the *new* engine at the *old* directory: PGlite alone
+      // fails with "PGlite failed to initialize properly", naming neither major,
+      // nor the directory, nor the engine. This is the replacement diagnostic.
+      return runCli(
+        [src, tgt, '--source-engine', 'pglite-new', '--target-engine', 'pglite-new'],
+        paths(src, tgt),
+      );
     },
   },
   {
