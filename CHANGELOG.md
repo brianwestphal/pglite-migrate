@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 _Nothing yet._
 
+## [2.0.1] - 2026-08-01
+
+
+
+- Fixed the npm publish workflow failing before install; the publish job now pins npm to the 11.x line instead of installing `@latest`, which had begun requiring a newer Node than the workflow uses.
+
+
+- Regenerated the terminal demo recordings, adding the previously missing engine-mismatch clip referenced by the README.
+
 ## [2.0.0] - 2026-08-01
 
 
