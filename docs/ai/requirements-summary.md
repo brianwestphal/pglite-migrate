@@ -17,7 +17,7 @@ The problem (PGlite can't open an old-major data dir after a major bump) and the
 - FR-2.7 FK introspection — **Shipped**, hardened: edges are schema-qualified (PGLM-20) so ordering + cycle detection work for `public`-schema tables (previously silently dropped)
 - FR-2.14 / NFR-2.15 transfer — **Shipped**: COPY-text first (preserves `json` etc.) with per-table row-by-row INSERT fallback (PGLM-22/doc 7)
 
-## 3 / 9 / 16 — Schema Reconstruction, standalone — Shipped
+## 3 / 9 / 16 / 17 — Schema Reconstruction, standalone — Shipped
 
 The no-host-app DDL path. `reconstructSchema(source, target, { onUnsupported })` rebuilds app-class objects (enums → sequences → tables+defaults → constraints → indexes) via `pg_get_*def`; out-of-scope objects are detected & reported. `onUnsupported` (default `warn`) escalates to `error` (throws before any DDL) — surfaced on `MigrateOptions` and CLI `--on-unsupported` (PGLM-38). Opt-in via `migrate({ reconstructSchema: true })` / CLI `--reconstruct-schema`. (PGLM-25/doc 9; spike PGLM-24 chose hand-rolled.)
 
@@ -26,7 +26,7 @@ The PGLM-74 audit found four gaps (reproduced against a real PGlite pair); **all
 1. ~~Multi-schema sources fail outright.~~ **Fixed** — `reconstructSchemas` emits `CREATE SCHEMA IF NOT EXISTS` first; reported as `ReconstructionReport.schemas` (PGLM-76).
 2. ~~Sequence parameters dropped.~~ **Fixed** — full `AS <type> INCREMENT BY … MINVALUE … MAXVALUE … START WITH … [NO] CYCLE` from `pg_sequence`, bounds validated before splicing (PGLM-77).
 3. ~~`OWNED BY` never re-established.~~ **Fixed** — `reconstructSequenceOwnership` replays `pg_depend` deptype `'a'` after tables exist; identity columns untouched (PGLM-78).
-4. ~~Domain/composite types neither rebuilt nor reported.~~ **Fully fixed** — detected in PGLM-79, then **reconstructed** in PGLM-92, which resolves **OQ-9.5** and adds [`docs/16-custom-types.md`](../16-custom-types.md). `reconstructCustomTypes` emits enums, domains and composites in one `pg_type.oid`-ordered pass (OID order is a genuine dependency order), so cross-kind cases work; domains carry their base type, `DEFAULT`, `NOT NULL`, `COLLATE` and every CHECK. Reconstructed types are no longer listed as unsupported; range types still are.
+4. ~~Domain/composite types neither rebuilt nor reported.~~ **Fully fixed** — detected in PGLM-79, then **reconstructed** in PGLM-92, which resolves **OQ-9.5** and adds [`docs/16-custom-types.md`](../16-custom-types.md). `reconstructCustomTypes` emits enums, domains and composites in one `pg_type.oid`-ordered pass (OID order is a genuine dependency order), so cross-kind cases work; domains carry their base type, `DEFAULT`, `NOT NULL`, `COLLATE` and every CHECK. Reconstructed types are no longer listed as unsupported. **Ranges followed in PGLM-95** ([`docs/17`](../17-range-types.md)): function-free ranges are reconstructed (subtype, collation, non-default opclass, explicit multirange name); only a range depending on a canonical/subdiff *function* is still reported — and that state is unreachable through PGlite DDL anyway. PGLM-95 also fixed a pre-existing detector defect: a range's five auto-created constructor functions were being reported as user functions.
 
 `detectUnsupported` is now table-driven and covers **every** NG-9.10 class — views, matviews, partitioned + foreign tables, domains, composites, functions, triggers, policies, rules, opclasses, collations, comments, grants, extensions — without double-reporting a view's implicit `_RETURN` rule or row type (PGLM-80).
 

@@ -38,11 +38,12 @@ function numericLiteral(value: string, field: string): string {
  * `pg_dump` binary).
  *
  * Scope is app-class objects only: tables, columns, custom types (enums,
- * domains, composites — `docs/16`), sequences, PK/UNIQUE/CHECK/FK, and indexes.
- * Out-of-scope objects — views, materialized views, partitioned and foreign
- * tables, range types, functions, triggers, RLS policies, rules, operator
- * classes, collations, comments, grants, and extensions — are **detected and
- * reported**, never silently dropped. See `docs/9`.
+ * domains, composites — `docs/16`; ranges — `docs/17`), sequences,
+ * PK/UNIQUE/CHECK/FK, and indexes. Out-of-scope objects — views, materialized
+ * views, partitioned and foreign tables, functions, triggers, RLS policies,
+ * rules, operator classes, collations, comments, grants, extensions, and the
+ * one un-emittable type case (a range needing a canonical/subdiff function) —
+ * are **detected and reported**, never silently dropped. See `docs/9`.
  *
  * `options.onUnsupported` (default `warn`) controls what happens when the source
  * has out-of-scope objects: `warn` rebuilds the app-class schema anyway and
@@ -70,7 +71,7 @@ export async function reconstructSchema(
   // Schemas first: every qualified CREATE below lands inside one, and only
   // `public` is guaranteed to exist on a fresh target (PGLM-76).
   const schemas = await reconstructSchemas(source, target);
-  const { enums, domains, composites } = await reconstructCustomTypes(source, target);
+  const { enums, domains, composites, ranges } = await reconstructCustomTypes(source, target);
   const sequences = await reconstructSequences(source, target);
   const tables = await reconstructTables(source, target);
   // Ownership is re-linked only once the owning tables exist (PGLM-78).
@@ -82,6 +83,7 @@ export async function reconstructSchema(
     enums,
     domains,
     composites,
+    ranges,
     sequences,
     tables,
     constraints,
@@ -113,11 +115,12 @@ async function reconstructSchemas(source: PGliteLike, target: PGliteLike): Promi
   return created;
 }
 
-/** The three custom-type kinds reconstruction emits, bucketed for the report. */
+/** The custom-type kinds reconstruction emits, bucketed for the report. */
 interface CustomTypes {
   enums: string[];
   domains: string[];
   composites: string[];
+  ranges: string[];
 }
 
 /** One user-declared custom type, as read from `pg_type`. */
@@ -125,7 +128,7 @@ interface ReconType {
   oid: number;
   schema: string;
   name: string;
-  kind: 'e' | 'd' | 'c';
+  kind: 'e' | 'd' | 'c' | 'r';
   /** Enum labels in sort order; empty for other kinds. */
   labels: string[] | null;
   /** Domain base type via `format_type`; null for other kinds. */
@@ -134,22 +137,33 @@ interface ReconType {
   default_expr: string | null;
   collation: string | null;
   collation_schema: string | null;
+  /** Range subtype via `format_type`; null for other kinds. */
+  range_subtype: string | null;
+  range_collation: string | null;
+  range_collation_schema: string | null;
+  /** Subtype operator class, only when it is *not* the subtype's default. */
+  range_subopclass: string | null;
+  range_subopclass_schema: string | null;
+  /** Name of the multirange type Postgres auto-creates alongside the range. */
+  range_multirange: string | null;
 }
 
 /**
- * Recreate the source's user-declared custom types: enums, domains, and
- * standalone composites (`docs/16`).
+ * Recreate the source's user-declared custom types: enums, domains, standalone
+ * composites (`docs/16`) and function-free ranges (`docs/17`).
  *
- * All three kinds are emitted in **one pass ordered by `pg_type.oid`**, which is
+ * All kinds are emitted in **one pass ordered by `pg_type.oid`**, which is
  * a genuine dependency order rather than a heuristic: a type cannot be defined
  * over one that does not exist yet, and creation assigns increasing OIDs, so
  * every dependency has a lower OID than its dependant. That is what makes the
  * cross-kind cases work — a domain over an enum, a composite with a
- * domain-typed attribute, a domain over another domain — which three separate
- * name-ordered passes could not (NFR-16.7).
+ * domain-typed attribute, a domain over another domain, a range over a domain —
+ * which separate name-ordered passes could not (NFR-16.7).
  *
- * Excluded: `information_schema`'s built-in domains, and the implicit composite
- * row type every table, view and sequence carries in `pg_type` (NFR-16.8).
+ * Excluded: `information_schema`'s built-in domains, the implicit composite row
+ * type every table, view and sequence carries in `pg_type` (NFR-16.8), and
+ * multirange types, which Postgres creates implicitly with their range
+ * (FR-17.6).
  */
 async function reconstructCustomTypes(
   source: PGliteLike,
@@ -166,13 +180,31 @@ async function reconstructCustomTypes(
             t.typnotnull AS notnull,
             pg_get_expr(t.typdefaultbin, 0) AS default_expr,
             co.collname AS collation,
-            cn.nspname AS collation_schema
+            cn.nspname AS collation_schema,
+            CASE WHEN t.typtype = 'r'
+                 THEN format_type(rng.rngsubtype, NULL) END AS range_subtype,
+            rco.collname AS range_collation,
+            rcn.nspname AS range_collation_schema,
+            CASE WHEN opc.opcdefault IS FALSE THEN opc.opcname END AS range_subopclass,
+            CASE WHEN opc.opcdefault IS FALSE THEN opcn.nspname END AS range_subopclass_schema,
+            mrt.typname AS range_multirange
        FROM pg_type t
        JOIN pg_namespace n ON n.oid = t.typnamespace
        LEFT JOIN pg_collation co ON co.oid = t.typcollation AND t.typtype = 'd'
        LEFT JOIN pg_namespace cn ON cn.oid = co.collnamespace
+       LEFT JOIN pg_range rng ON rng.rngtypid = t.oid
+       LEFT JOIN pg_collation rco ON rco.oid = rng.rngcollation
+       LEFT JOIN pg_namespace rcn ON rcn.oid = rco.collnamespace
+       LEFT JOIN pg_opclass opc ON opc.oid = rng.rngsubopc
+       LEFT JOIN pg_namespace opcn ON opcn.oid = opc.opcnamespace
+       LEFT JOIN pg_type mrt ON mrt.oid = rng.rngmultitypid
       WHERE ${SYS}
-        AND t.typtype IN ('e', 'd', 'c')
+        -- 'm' (multirange) is deliberately absent: Postgres creates it
+        -- implicitly with its range, so emitting one would fail (FR-17.6).
+        AND t.typtype IN ('e', 'd', 'c', 'r')
+        -- A range needing a canonical/subdiff function cannot be emitted in one
+        -- statement and stays reported instead (FR-17.2).
+        AND (t.typtype <> 'r' OR (rng.rngcanonical = 0 AND rng.rngsubdiff = 0))
         -- A standalone composite has a pg_class entry of relkind 'c'; a table's
         -- implicit row type points at the table itself and must not be emitted.
         AND (t.typtype <> 'c'
@@ -182,7 +214,7 @@ async function reconstructCustomTypes(
   );
 
   const checks = await domainChecks(source);
-  const out: CustomTypes = { enums: [], domains: [], composites: [] };
+  const out: CustomTypes = { enums: [], domains: [], composites: [], ranges: [] };
 
   for (const t of rows) {
     const qualified = quoteQualified(t.schema, t.name);
@@ -193,9 +225,12 @@ async function reconstructCustomTypes(
     } else if (t.kind === 'd') {
       await target.exec(domainDef(qualified, t, checks.get(t.oid) ?? []));
       out.domains.push(tableKey(t));
-    } else {
+    } else if (t.kind === 'c') {
       await target.exec(`CREATE TYPE ${qualified} AS (${await compositeAttrs(source, t.oid)})`);
       out.composites.push(tableKey(t));
+    } else {
+      await target.exec(rangeDef(qualified, t));
+      out.ranges.push(tableKey(t));
     }
   }
   return out;
@@ -239,6 +274,31 @@ function domainDef(qualified: string, t: ReconType, checks: string[]): string {
   if (t.notnull) parts.push('NOT NULL');
   parts.push(...checks);
   return parts.join(' ');
+}
+
+/**
+ * Assemble a `CREATE TYPE … AS RANGE` statement (`docs/17`).
+ *
+ * The multirange name is always passed through rather than left to Postgres to
+ * derive: the derivation rule is not worth reimplementing, and a source may have
+ * overridden it with `multirange_type_name` (FR-17.5). The subtype operator
+ * class is emitted only when it is not the subtype's default — the query has
+ * already nulled it out otherwise (FR-17.4).
+ */
+function rangeDef(qualified: string, t: ReconType): string {
+  const opts = [`subtype = ${t.range_subtype ?? 'text'}`];
+  if (t.range_collation !== null && t.range_collation_schema !== null) {
+    opts.push(`collation = ${quoteQualified(t.range_collation_schema, t.range_collation)}`);
+  }
+  if (t.range_subopclass !== null && t.range_subopclass_schema !== null) {
+    opts.push(
+      `subtype_opclass = ${quoteQualified(t.range_subopclass_schema, t.range_subopclass)}`,
+    );
+  }
+  if (t.range_multirange !== null) {
+    opts.push(`multirange_type_name = ${quoteIdent(t.range_multirange)}`);
+  }
+  return `CREATE TYPE ${qualified} AS RANGE (${opts.join(', ')})`;
 }
 
 /** Render a standalone composite's attributes in physical order. */
@@ -476,21 +536,33 @@ const DETECTORS: readonly Detector[] = [
            WHERE c.relkind IN ('v', 'm', 'p', 'f') AND ${SYS}`,
   },
   {
-    // Custom-type kinds that are still out of scope. Enums, domains and
-    // composites are reconstructed (docs/16), so they are deliberately absent:
-    // reporting a type as "not recreated" while recreating it would be worse
-    // than either behavior alone (FR-16.3). Ranges remain reported.
-    label: 'type',
-    sql: `SELECT CASE t.typtype WHEN 'r' THEN 'range type' ELSE 'type' END AS kind,
-                 n.nspname || '.' || t.typname AS name
-            FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-           WHERE t.typtype = 'r' AND ${SYS}`,
+    // Enums, domains, composites (docs/16) and function-free ranges (docs/17)
+    // are reconstructed, so they are deliberately absent: reporting a type as
+    // "not recreated" while recreating it would be worse than either behavior
+    // alone (FR-16.3). What remains is the one genuinely un-emittable case — a
+    // range whose canonical/subdiff is a function. Postgres cannot create such
+    // a range in a single statement even in principle (FR-17.2/FR-17.7).
+    label: 'range type (depends on a canonical/subdiff function)',
+    sql: `SELECT n.nspname || '.' || t.typname AS name
+            FROM pg_type t
+            JOIN pg_range r ON r.rngtypid = t.oid
+            JOIN pg_namespace n ON n.oid = t.typnamespace
+           WHERE ${SYS} AND (r.rngcanonical <> 0 OR r.rngsubdiff <> 0)`,
   },
   {
+    // Excludes functions Postgres creates *for* another object rather than the
+    // user creating them: a range type auto-generates five constructors
+    // (`intrange(int,int)`, `intmultirange(...)`, …), each carrying an INTERNAL
+    // dependency on its type. Reporting those as unsupported user functions
+    // would be a phantom warning on every source that declares a range.
     label: 'function',
     sql: `SELECT n.nspname || '.' || p.proname AS name
             FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE ${SYS}`,
+           WHERE ${SYS}
+             AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                              WHERE d.objid = p.oid
+                                AND d.classid = 'pg_proc'::regclass
+                                AND d.deptype = 'i')`,
   },
   {
     label: 'trigger',

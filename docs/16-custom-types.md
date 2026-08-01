@@ -34,7 +34,7 @@ This does not move the line drawn by **NG-3.5** / **NG-9.10**. Custom types were
 - **FR-16.6 Collations are emitted** when the domain declares one (see [Collation](#collation-and-ng-910) for how this interacts with NG-9.10).
 - **NFR-16.7 Dependency order is respected.** A domain may be defined over an enum or a composite, a composite may have a domain-typed attribute, and a domain may be defined over another domain. All custom types are therefore emitted in one pass in a dependency-safe order (see [Ordering](#ordering)).
 - **NFR-16.8 System types are excluded.** `information_schema` ships built-in domains (`cardinal_number`, `yes_or_no`, …) and every table, view and sequence has an implicit composite row type in `pg_type`. Neither is a user-declared type and neither may be emitted.
-- **NG-16.9 Not in scope: range, enum-of-composite, and base types.** `CREATE TYPE … AS RANGE` and C-level base types (`typtype` `r` and `b` with no array parent) stay out of scope and are reported. Ranges are plausible future work; base types require a compiled extension and never make sense here.
+- **NG-16.9 Not in scope: base types.** C-level base types (`typtype = 'b'` with no array parent) require a compiled extension and never make sense here. ~~Range types~~ — **now in scope**, see [`17-range-types.md`](17-range-types.md) (PGLM-95); only a range depending on a canonical/subdiff *function* is still reported.
 
 ## Design
 
@@ -94,5 +94,5 @@ Per [`6-testing.md`](6-testing.md)'s double-coverage rule:
 
 ## Follow-up
 
-- **Range types** (`typtype = 'r'`) — reported as unsupported today. Mechanically similar to domains (`pg_range` gives subtype, opclass, canonical function) and worth revisiting if a real schema needs them.
+- ~~**Range types**~~ — **done (PGLM-95)**, see [`17-range-types.md`](17-range-types.md).
 - **Domain-over-domain depth** is handled by the OID ordering, but is not exercised by a test; add one if it ever appears in a real source.

@@ -345,11 +345,88 @@ describe('reconstructSchema (audit regressions)', () => {
     expect(report.unsupported).toEqual([]);
   });
 
-  it('still reports range types, which stay out of scope (NG-16.9)', async () => {
+  it('reconstructs a function-free range type (FR-17.1)', async () => {
+    await source.exec(`
+      CREATE TYPE intrange AS RANGE (subtype = integer);
+      CREATE TABLE spans (r intrange);
+    `);
+
+    const report = await reconstructSchema(source, target);
+
+    expect(report.ranges).toEqual(['public.intrange']);
+    expect(report.unsupported).toEqual([]);
+
+    // Usable on the target, not merely present.
+    await target.query(`INSERT INTO spans (r) VALUES ('[1,5)'::intrange)`);
+    const { rows } = await target.query<{ has: boolean }>(
+      `SELECT r @> 3 AS has FROM spans`,
+    );
+    expect(rows[0].has).toBe(true);
+  });
+
+  it('orders a range over a domain subtype correctly (NFR-17.8)', async () => {
+    await source.exec(`
+      CREATE DOMAIN posint AS integer CHECK (VALUE > 0);
+      CREATE TYPE posrange AS RANGE (subtype = posint);
+    `);
+
+    const report = await reconstructSchema(source, target);
+
+    expect(report.domains).toEqual(['public.posint']);
+    expect(report.ranges).toEqual(['public.posrange']);
+    expect(report.unsupported).toEqual([]);
+  });
+
+  it('carries a non-default collation on the range subtype (FR-17.3)', async () => {
+    await source.exec(`CREATE TYPE crange AS RANGE (subtype = text, collation = "C")`);
+
+    await reconstructSchema(source, target);
+
+    const { rows } = await target.query<{ coll: string | null }>(
+      `SELECT c.collname AS coll
+         FROM pg_range r JOIN pg_type t ON t.oid = r.rngtypid
+         LEFT JOIN pg_collation c ON c.oid = r.rngcollation
+        WHERE t.typname = 'crange'`,
+    );
+    expect(rows[0]?.coll).toBe('C');
+  });
+
+  it('does not emit or report the auto-created multirange type (FR-17.6)', async () => {
     await source.exec(`CREATE TYPE intrange AS RANGE (subtype = integer)`);
 
     const report = await reconstructSchema(source, target);
 
-    expect(report.unsupported).toContainEqual({ kind: 'range type', name: 'public.intrange' });
+    // It is created implicitly by the range, so it belongs in neither list...
+    expect(report.ranges).toEqual(['public.intrange']);
+    expect(report.unsupported).toEqual([]);
+    // ...and it must still exist and work on the target.
+    const { rows } = await target.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_type t
+         JOIN pg_namespace ns ON ns.oid = t.typnamespace
+        WHERE ns.nspname = 'public' AND t.typtype = 'm'`,
+    );
+    expect(rows[0].n).toBe(1);
+    await target.query(`SELECT '{[1,5)}'::intmultirange`);
+  });
+
+  it('reports a range that depends on a canonical function (FR-17.2/FR-17.7)', async () => {
+    // This state cannot be reached through normal DDL *in PGlite*: a canonical
+    // function must accept the range's shell type, which SQL functions refuse
+    // ("cannot accept shell type") and PL/pgSQL cannot return, and C functions
+    // are unavailable in WASM. So the branch is defensive — and the only honest
+    // way to exercise it is to write the catalog row the detector keys on.
+    await source.exec(`CREATE TYPE ir AS RANGE (subtype = integer)`);
+    await source.exec(`SET allow_system_table_mods = on`);
+    await source.exec(
+      `UPDATE pg_range SET rngcanonical = 'int4in'::regproc WHERE rngtypid = 'ir'::regtype`,
+    );
+
+    const report = await reconstructSchema(source, target);
+
+    expect(report.ranges).toEqual([]);
+    expect(report.unsupported).toContainEqual({
+      kind: 'range type (depends on a canonical/subdiff function)',
+      name: 'public.ir',
+    });
   });
 });

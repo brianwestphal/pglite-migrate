@@ -21,7 +21,7 @@ src/
   validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks; exports ValidationError (thrown by migrate when onValidationFailure: 'throw')
   backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
-  reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); schemas → custom types → sequences(+params) → tables → OWNED BY → constraints → indexes; onUnsupported 'error' throws before any DDL. reconstructCustomTypes emits enums+domains+composites in ONE pg_type.oid-ordered pass (OID order IS dependency order — doc 16). detectUnsupported is table-driven (DETECTORS) and covers every remaining NG-9.10 class
+  reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); schemas → custom types → sequences(+params) → tables → OWNED BY → constraints → indexes; onUnsupported 'error' throws before any DDL. reconstructCustomTypes emits enums+domains+composites+ranges in ONE pg_type.oid-ordered pass (OID order IS dependency order — docs 16/17). detectUnsupported is table-driven (DETECTORS) and covers every remaining NG-9.10 class
   loader.ts       openDataDir(dir, modulePath, options): open a data dir with a chosen PGlite package/alias; resolve-first, then optional acquisition; absolute paths go through pathToFileURL
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster; readEngineMajor(db): ask a running engine which major it IS
   precheck.ts     assertEngineMatchesDataDir(db, {dataDir, expectedMajor, side, engine}): fail early when an engine can't serve the dir; exports EngineMismatchError. expectedMajor must be the PRE-open PG_VERSION (a fresh dir is initialized at the engine's own major, so a post-open read is vacuous); null skips without querying
@@ -53,7 +53,7 @@ tests/
   e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
   e2e/acquired-engine.test.ts            Migration whose SOURCE engine is downloaded, not installed. The only network-dependent suite — self-gates and ctx.skip()s offline
   e2e/engine-mismatch.test.ts            Real PG18 engine on a real PG17 dir: the precheck's actionable error replaces PGlite's opaque init failure
-docs/                 Requirements (1–16), ARCHITECTURE.md, ai/ summaries
+docs/                 Requirements (1–17), ARCHITECTURE.md, ai/ summaries
 ```
 
 ## Public API (`src/index.ts`)
@@ -62,7 +62,7 @@ docs/                 Requirements (1–16), ARCHITECTURE.md, ai/ summaries
 - `planMigration(source, onProgress?)` → `MigrationReport` — dry-run plan (writes nothing)
 - `introspectSchema(db)`, `validateMigration(...)`, `reconstructSchema(source, target, options?)`
 - `topologicalSort`, `transferTable`, `transferCycle`, `applySequences`
-- `MigrationReport` now also carries `onExisting` (resolved policy) and `truncatedTables` (destructive re-run record); `ReconstructionReport` carries `schemas`, `domains`, `composites`
+- `MigrationReport` now also carries `onExisting` (resolved policy) and `truncatedTables` (destructive re-run record); `ReconstructionReport` carries `schemas`, `domains`, `composites`, `ranges`
 - `backupDataDir(dir, opts?)`, `swapIntoPlace(canonical, new, opts?)` — safety primitives
 - `openDataDir(dir, modulePath?, options?)`, `readClusterVersion(dataDir)`, `readEngineMajor(db)`
 - `assertEngineMatchesDataDir(db, options)` + `EngineMismatchError` — engine/data-directory major precheck

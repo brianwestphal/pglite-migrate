@@ -72,11 +72,12 @@ All docs live in `docs/`. Requirements are numbered for linear reading (`docs/N-
 - `docs/14-idempotence.md` — detailed spec: re-run safety (FR-5.6)
 - `docs/15-engine-acquisition.md` — detailed spec: opt-in downloading of a missing engine (pinned registry, hash verification, keep/ephemeral caching)
 - `docs/16-custom-types.md` — detailed spec: reconstructing enums, domains and composite types (resolves doc 9 OQ-9.5)
+- `docs/17-range-types.md` — detailed spec: reconstructing range types; the one un-emittable case (canonical/subdiff functions)
 - `docs/ARCHITECTURE.md` — components and data flow
 - `docs/ai/code-summary.md` — codebase map + "where do I look to…" index
 - `docs/ai/requirements-summary.md` — synthesized requirements view with status markers
 
-Docs 7–16 are **detailed, per-feature specs** (originally design-only for deferred capabilities; all are now implemented); docs 1–6 remain the high-level overview. Keep both in sync when implementing.
+Docs 7–17 are **detailed, per-feature specs** (originally design-only for deferred capabilities; all are now implemented); docs 1–6 remain the high-level overview. Keep both in sync when implementing.
 
 **When making changes, keep docs in sync** — update the relevant requirements doc and both AI summaries in the same pass.
 

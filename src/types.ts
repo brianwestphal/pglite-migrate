@@ -218,6 +218,13 @@ export interface ReconstructionReport {
   domains: string[];
   /** Standalone composite types recreated with their attributes in physical order. */
   composites: string[];
+  /**
+   * Range types recreated. Excludes any range depending on a canonical or
+   * subdiff **function** — those stay in {@link ReconstructionReport.unsupported},
+   * since functions are out of scope and Postgres cannot create such a range in
+   * a single statement anyway (`docs/17`).
+   */
+  ranges: string[];
   sequences: string[];
   tables: string[];
   constraints: string[];
