@@ -35,6 +35,15 @@ Twelve test files materialize a real data directory under the OS temp dir. They 
 
 > **Running two full suites concurrently is not supported.** Both write `coverage/.tmp` (`reportsDirectory: 'coverage'` is a fixed path), so they delete each other's temp coverage files and fail with an unrelated `ENOENT`. Use `--coverage.enabled=false` on one of them if you ever need to.
 
+### If the suite goes red with a timeout and an `errno 44`
+
+This was investigated in depth (PGLM-93 / PGLM-94). The short answer: **it is CPU starvation, not a deadlock or a filesystem race**, and the diagnosis order is the opposite of what the symptoms suggest.
+
+- The **timeout is primary.** The heaviest test (`cli.test.ts` → *migrates data, reports versions/progress/summary*) boots **five** file-backed PGlite clusters in one test — seed source, seed target, the CLI's own two, and a verification open. At ~1–2 s per boot on an idle machine that is comfortably inside the 30 s budget; on a machine running something else CPU-heavy it is not.
+- The **`errno 44` unhandled rejection is downstream.** When the test times out, vitest runs `afterEach`, teardown removes the scratch directory, and a still-running PGlite operation then fails with Emscripten's `ENOENT`. Across every run collected during the investigation, `errno 44` **never** appeared without a timeout, and a timeout was observed with **zero** `errno 44` — so it is a consequence, not a cause. An `unhandledRejection` handler instrumented over eight full runs plus a reproducing concurrent pair captured nothing during the timeout itself.
+
+So: do not chase a promise-never-settles bug, and do not raise `testTimeout` — the test is slow, not hung, and a larger budget would hide a genuine deadlock later. Check what else is competing for CPU.
+
 ## Philosophy (see CLAUDE.md)
 
 - **Double coverage** — pure logic gets focused unit tests; anything touching a real cluster is proven end to end.
