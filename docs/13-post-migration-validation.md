@@ -17,6 +17,8 @@ Today `migrate` returns a `MigrationReport` describing what it *did*, but perfor
 - **FR-13.1 Row-count parity** For every table transferred, validation re-counts rows on the **target** and compares against an independent count of the **source**. A mismatch is a validation failure. Counts are taken after transfer completes, before any swap.
 - **FR-13.2 Sequence consistency** For every source sequence with a non-null `lastValue` (the ones `applySequences` acts on), validation confirms the target sequence's current value is *consistent* with the source — i.e. the target's `nextval` will not re-issue a value already present in the migrated data. See Design for the exact "consistent" predicate.
 - **FR-13.3 Optional content agreement (aggregate/checksum)** An opt-in level that computes a cheap-but-strong digest per table on both engines (e.g. a count plus an aggregate/hash over deterministically ordered rows) and compares them, catching content corruption that a row count alone cannot. Must be version-agnostic and degrade gracefully (skip + warn) where a primitive is unavailable. Off by default in v1; see Open Questions.
+- **FR-13.13 Layout-independent digest** The `full` digest compares **content, not physical column layout**. It is taken over the columns the source and target *share*, projected in the same canonical (name-sorted) order on both sides, so a target whose columns sit in a different ordinal order than the source digests identically when the data is identical. **Implemented (PGLM-99).** Rationale in the Design section below; this is the common case in the app-driven path, not an edge case.
+- **FR-13.14 Column-set reporting** At the `full` level each `TableValidation` records the columns that took part (`comparedColumns`), the source columns the target **lacks** (`missingColumns`), and the columns only the target has (`extraColumns`). `missingColumns` **fails** the table — that is source data with nowhere to land. `extraColumns` **does not** fail it: a host app on a newer schema than the data it is migrating is the expected app-driven shape. **Implemented (PGLM-99).**
 - **FR-13.4 Fail loudly, do not swap** On any validation failure, `migrate` (when validation is enabled) marks the report `validation.ok === false`, and the orchestration **must not** proceed to an atomic swap (PGLM-5); the freshly written target directory is discarded and the source is left untouched. No silent best-effort. **Implemented (PGLM-40)** as `MigrateOptions.onValidationFailure`: `'report'` (default, non-breaking — return the report with `ok === false` plus a warning) or `'throw'` (raise the exported typed `ValidationError`, which carries the `ValidationReport`, so an unattended *library* caller cannot ignore a falsy `ok`). The CLI exits non-zero on failure either way, and `--strict` opts the CLI into `throw`.
 - **FR-13.5 Surface results in the report** Validation results are attached to `MigrationReport` (new `validation` field, see Report/CLI surface) as structured, per-table data: which checks ran, per-table source vs target counts, sequence comparisons, any digest comparisons, and a flat list of mismatches. This holds whether validation passed or failed.
 - **FR-13.6 Run after transfer, before swap** Validation runs inside the orchestrator (`src/migrate.ts`) after `transferTable`/`applySequences` complete and **before** control returns to any swap step. It reads only — it performs no DDL and no writes on either engine.
@@ -47,20 +49,21 @@ Two checks, both cheap:
 
 Adds a per-table digest (FR-13.3) to catch corruption that counts miss. The design constraint is **cheap, strong, and portable across majors** — and reproducible on two different engines.
 
-Recommended primitive: a **per-table aggregate over a stable row encoding**. For each table:
+Recommended primitive: a **per-table aggregate over a stable row encoding**. **As shipped** (PGLM-99), over an explicit, name-sorted projection of the shared columns rather than the bare whole row:
 
 ```sql
-SELECT count(*) AS n,
-       md5(string_agg(t.row_text, E'\n' ORDER BY t.row_text)) AS digest
-  FROM (
-    SELECT (<qualified> r)::text AS row_text FROM <qualified> r
-  ) t;
+SELECT md5(coalesce(string_agg(x::text, E'\n' ORDER BY x::text), '')) AS d
+  FROM (SELECT "col_a", "col_b", … FROM <qualified>) AS x;
 ```
 
 Notes on the choices:
 
-- **Order independence.** Aggregating with `ORDER BY t.row_text` makes the digest independent of physical row order, which differs between source and target after a fresh re-insert. This avoids needing a primary key to sort by, and works for tables without one. (Cost: a sort over the encoded rows.)
-- **Row encoding via `::text` of the row type.** Casting the whole row to `text` uses Postgres's own composite output. This is portable and requires no per-column logic. Its weakness is exactly the fidelity gap we care about: `json` whitespace/key-order and `numeric`/`bytea`/array text forms must render identically on both engines for the digest to match. Across two *different* majors, those text representations are **not guaranteed identical**, so a `full` digest mismatch is "investigate," not necessarily "data is corrupt." This caveat is why `full` is opt-in and why the report must show *which* tables disagreed rather than only a pass/fail bit.
+- **Order independence.** Aggregating with `ORDER BY x::text` makes the digest independent of physical *row* order, which differs between source and target after a fresh re-insert. This avoids needing a primary key to sort by, and works for tables without one. (Cost: a sort over the encoded rows.)
+- **Layout independence (FR-13.13).** The original shape hashed a bare whole-row `t::text`, which Postgres renders in **ordinal-position order** — so the digest encoded the table's physical column layout as well as its content, and two tables holding identical data in a different column order disagreed. That is not a corner case in the app-driven path: the source reached its schema by `ALTER TABLE ADD COLUMN` (which always *appends*) while the target was built by the host app's current `CREATE TABLE` (which puts each column where the DDL declares it), so any long-lived app diverges on at least one table. The fix is to project an **explicit column list** — the source/target intersection, sorted by name in JavaScript so the two engines cannot disagree about collation — identically on both sides. Column *identity* is still fully checked, since a value moving between columns changes the projection's text.
+- **Widths differ too, and that is fine.** A target with columns the source never had cannot match a whole-row digest by construction. Those columns are reported (`extraColumns`) and excluded from the digest. Columns going the *other* way (`missingColumns`) fail the table outright and suppress the digest, which would otherwise be vacuously green on the columns that did survive.
+- **Row encoding via `::text` of the projection.** Casting the projected row to `text` uses Postgres's own composite output. This is portable and requires no per-column logic. Its weakness is exactly the fidelity gap we care about: `json` whitespace/key-order and `numeric`/`bytea`/array text forms must render identically on both engines for the digest to match. Across two *different* majors, those text representations are **not guaranteed identical**, so a `full` digest mismatch is "investigate," not necessarily "data is corrupt." This caveat is why `full` is opt-in and why the report must show *which* tables disagreed rather than only a pass/fail bit.
+- **One extra introspection, `full` only.** Computing the intersection needs the target's column sets, so `full` introspects the target once up front. The default `counts` level does not, and stays exactly as cheap as before (NFR-13.9).
+- **Zero-column tables.** `CREATE TABLE t ()` has nothing to project (`SELECT  FROM t` is not valid SQL), so no digest is taken and the row-count check is the whole verdict.
 - **Hash choice.** `md5` is available everywhere and is sufficient for accidental-corruption detection (this is not a security context). It returns a short hex string that is trivial to compare and to print in the report.
 - **Cost.** This reads every row again and sorts the encoded form — roughly the cost of the transfer plus a sort, per table. That is why it is not the default (NFR-13.9).
 
@@ -100,10 +103,13 @@ An optional `validation` field plus supporting interfaces. **As shipped** (`src/
 export type ValidationLevel = 'off' | 'counts' | 'full';
 
 export interface TableValidation {
-  table: string;            // qualified schema.name
+  table: string;              // qualified schema.name
   sourceRows: number;
   targetRows: number;
-  digestMatch?: boolean;    // present only at level 'full'
+  digestMatch?: boolean;      // 'full' only, and only when a digest was taken
+  comparedColumns?: string[]; // 'full' only: the shared columns, name-sorted (FR-13.14)
+  missingColumns?: string[];  // 'full' only: source columns the target lacks — FAILS
+  extraColumns?: string[];    // 'full' only: target-only columns — reported, does not fail
   ok: boolean;
 }
 
@@ -135,7 +141,7 @@ One deviation is **not** deliberate: `sourceRows`/`targetRows` are `number`, and
 ### CLI (`src/cli.ts`)
 
 - A `--validate <level>` flag (`off` | `counts` | `full`), defaulting to the library default. **Shipped**, plus `--strict` for `onValidationFailure: 'throw'`.
-- **Shipped, reduced:** the CLI prints a single `Validation (<level>): OK.` / `Validation (<level>): FAILED.` line and exits non-zero on failure. The failing table and sequence names reach the operator through the `warning: Post-migration validation failed for: …` line (or, under `--strict`, the thrown error's message).
+- **Shipped, reduced:** the CLI prints a single `Validation (<level>): OK.` / `Validation (<level>): FAILED.` line and exits non-zero on failure. The failing table and sequence names reach the operator through the `warning: Post-migration validation failed for: …` line (or, under `--strict`, the thrown error's message). On a failure the per-table detail line names any `missingColumns` alongside the counts — without them a column-loss failure is indistinguishable from a digest drift, since the counts still match.
 - **Not shipped:** the per-table `users: 1234 = 1234 ✓` summary, and the `Validation: FAILED — target not swapped` wording (there is no CLI swap step to suppress yet — see [`11-atomic-swap.md`](11-atomic-swap.md)). Tracked as a follow-up; a caller wanting per-table detail reads `report.validation.tables` from the library.
 
 ## Acceptance
@@ -150,12 +156,14 @@ Per [`6-testing.md`](./6-testing.md), every new capability gets a unit test for 
 
 - **Unit (`tests/*.test.ts`, `vitest.config.ts`).**
   - The pure verdict logic — given source/target counts and sequence values, `ok`, `mismatches`, and per-table booleans are computed correctly (parity, off-by-one short, target sequence behind source). Extract this comparison logic so it is testable without a cluster, mirroring `topologicalSort`.
+  - **Column layout (FR-13.13/FR-13.14, `tests/validate.test.ts`).** Same columns in a different ordinal order → `full` passes. Target-only columns → passes, reported in `extraColumns`. A source column the target lacks → fails, named in `missingColumns`, with **no** digest taken. Genuinely different data under a differing layout → still fails. Two columns whose values were *swapped* → still fails (guards against a digest that hashed a sorted value bag rather than the row projection). A zero-column table → count check only. `counts` level → no column reporting at all.
   - Sequence "consistent" predicate: `target >= source` passes, `target < source` fails, null-`lastValue` sequences are skipped.
   - Count comparison uses BigInt/string compare (large-count sanity, no `Number` overflow).
 - **E2E (`tests/e2e/*.test.ts`, `vitest.e2e.config.ts`).** Using the two-version `pglite-old`/`pglite-new` aliases (do not collapse them — NFR-6.3):
   - Happy-path `counts` validation passes on the existing round-trip fixture.
   - The deliberate-mismatch case above fails and blocks the swap.
   - A `full` run agrees on a fidelity-heavy table across the cross-major matrix (PG17→PG18) — verified during PGLM-19 (digests match because COPY-text preserves text form). Any future digest divergence on a differing text form remains "investigate," per Design.
+  - **`tests/e2e/column-drift.test.ts` (PGLM-99).** A real PG17 → PG18 migration whose target declares the same columns in a different order *and* adds one the source never had: `full` passes, `extraColumns` names the new column, and a deliberately corrupted value under that same layout change still fails.
 - Add validation cases to the "What the e2e asserts" / "Gaps" lists in `6-testing.md` when implemented.
 
 ## Open Questions

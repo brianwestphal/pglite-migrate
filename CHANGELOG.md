@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
-_Nothing yet._
+### Fixed
+
+- `validateMigration(..., 'full')` no longer reports a mismatch for tables whose data migrated perfectly but whose columns sit in a different physical order on the target. The per-table digest hashed a whole-row `::text`, which Postgres renders in ordinal-position order, so it encoded the table's column *layout* along with its content. This is the norm in the app-driven path — the source reached its schema by `ALTER TABLE ADD COLUMN` (which appends) while the target was built from the host app's current `CREATE TABLE` — which made `full` unusable as a pass/fail gate there. The digest is now taken over the source/target column intersection, projected in the same name-sorted order on both sides.
+
+### Added
+
+- `TableValidation` gained `comparedColumns`, `missingColumns`, and `extraColumns` (all `full`-level only). Source columns the target lacks now **fail** the table as an explicit, separately-reported check — and are named on the CLI's per-table failure line — rather than being caught only incidentally by the digest. Columns only the target has are reported and do **not** fail, since a host app on a newer schema than its data is the expected case.
 
 ## [2.0.1] - 2026-08-01
 

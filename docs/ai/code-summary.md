@@ -18,7 +18,7 @@ src/
   introspect.ts   introspectSchema(db): tables, columns (+ generated/identity), FKs, sequences via catalog SQL
   transfer.ts     topologicalSort (pure), transferTable (COPY-first + INSERT fallback; names BOTH errors if the fallback also fails), transferCycle, applySequences
   migrate.ts      migrate(options) orchestrator + planMigration (dry-run); reconstruct → prepare(onExisting) → transfer → sequences → validate → report. Report echoes onExisting + truncatedTables
-  validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks; exports ValidationError (thrown by migrate when onValidationFailure: 'throw')
+  validate.ts     validateMigration(source, target, schema, level): counts / sequence / full-digest checks; exports ValidationError (thrown by migrate when onValidationFailure: 'throw'). The `full` digest is CONTENT-only, never layout: it projects the source∩target column intersection name-sorted on both sides (PGLM-99), introspecting the target once. missingColumns fail the table (and suppress the digest); extraColumns are reported only
   backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
   reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); schemas → custom types → sequences(+params) → tables → OWNED BY → constraints → indexes; onUnsupported 'error' throws before any DDL. reconstructCustomTypes emits enums+domains+composites+ranges in ONE pg_type.oid-ordered pass (OID order IS dependency order — docs 16/17). detectUnsupported is table-driven (DETECTORS) and covers every remaining NG-9.10 class
@@ -36,7 +36,7 @@ tests/
   introspect(.edge).test.ts              Introspection (basic + edge: multi-schema, dropped/qualified FK/composite, generated/identity, type qualifiers)
   transfer.test.ts                       transferTable (COPY + INSERT fallback + generated exclusion + both-paths-fail error), applySequences, transferCycle failure/retry + fallback-inside-cycle
   migrate.test.ts                        Orchestrator: totals, FK ordering, cycle handling, validation, onExisting re-run safety (incl. a PARTIALLY-populated target: mixed skip-some/fill-others + FK integrity), dry-run
-  validate.test.ts                       counts / full-digest / sequence checks
+  validate.test.ts                       counts / full-digest / sequence checks + column layout (PGLM-99: reordered columns pass, target-only reported, source-only fails, swapped values + real drift still fail, zero-column table, counts stays column-free)
   backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch, no-PG_VERSION dir); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked) + SEQUENTIAL swaps (swap→swap, same-second collision, retry-after-restore, keepOld:false→swap)
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting + audit regressions (multi-schema, sequence params, OWNED BY) + custom types (domains w/ enforced CHECKs, composites, COLLATE, cross-kind ordering, range still reported)
   loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle); parseArgs + run() over real temp dirs (incl. engine/dir major mismatch)
@@ -51,6 +51,7 @@ tests/
   helpers.ts                             Shared SCHEMA_SQL + SEED_SQL fixtures
   tempdir.ts / tempdir.test.ts           makeTempDir/removeTempDir — every test scratch dir goes through these; removeTempDir retries ENOTEMPTY and never throws, so teardown can't bury a real failure (PGLM-93)
   e2e/roundtrip / fidelity / fk-cycle / standalone / cross-major .test.ts   Cross-major (PG17→PG18) runs via pglite-old/pglite-new aliases; cross-major asserts a PG18 engine refuses a PG17 dir
+  e2e/column-drift.test.ts               The app-driven layout case (PGLM-99): target declares the same columns in a different order + one extra; `full` passes, extraColumns reported, real drift still fails
   e2e/acquired-engine.test.ts            Migration whose SOURCE engine is downloaded, not installed. The only network-dependent suite — self-gates and ctx.skip()s offline
   e2e/engine-mismatch.test.ts            Real PG18 engine on a real PG17 dir: the precheck's actionable error replaces PGlite's opaque init failure
 docs/                 Requirements (1–17), ARCHITECTURE.md, ai/ summaries
