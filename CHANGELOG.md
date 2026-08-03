@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `validateMigration` no longer throws when the target lacks a table the source has. It counted rows on the target before checking the table existed, so `relation "…" does not exist` escaped as an exception and the caller got no report at all — meaning one absent table hid every other table's result. Such a table is now a reported failure carrying `missingTable: true`, at both the `counts` and `full` levels, and validation continues with the rest.
+
 - `validateMigration(..., 'full')` no longer reports a mismatch for tables whose data migrated perfectly but whose columns sit in a different physical order on the target. The per-table digest hashed a whole-row `::text`, which Postgres renders in ordinal-position order, so it encoded the table's column *layout* along with its content. This is the norm in the app-driven path — the source reached its schema by `ALTER TABLE ADD COLUMN` (which appends) while the target was built from the host app's current `CREATE TABLE` — which made `full` unusable as a pass/fail gate there. The digest is now taken over the source/target column intersection, projected in the same name-sorted order on both sides.
 
 ### Added

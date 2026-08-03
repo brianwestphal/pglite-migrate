@@ -256,6 +256,7 @@ function reportValidation(io: CliIO, validation: ValidationReport): void {
     for (const t of validation.tables) {
       const mark = t.ok ? '=' : '≠';
       const notes: string[] = [];
+      if (t.missingTable === true) notes.push('table missing on target');
       if (t.digestMatch === false) notes.push('digest mismatch');
       // Naming the missing columns is the whole diagnostic here: the counts
       // match, so without them a failed table looks identical to a digest drift.

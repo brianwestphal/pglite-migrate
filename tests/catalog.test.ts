@@ -8,6 +8,7 @@ import {
   regclassLiteral,
   systemSchemaFilter,
   tableKey,
+  tableKeys,
 } from '../src/catalog.js';
 import type { PGliteLike, SequenceInfo, TableInfo } from '../src/types.js';
 
@@ -98,6 +99,26 @@ describe('countRows', () => {
     const { rows } = await db.query<{ n: string }>(`SELECT 3000000000::bigint::text AS n`);
     expect(Number(rows[0].n)).toBe(3_000_000_000);
     expect(await countRows(like, '"public"."t"')).toBe(2);
+    await db.close();
+  });
+});
+
+describe('tableKeys', () => {
+  it('lists every user table across schemas, and nothing from the catalogs', async () => {
+    const db = new PGlite();
+    const like = db as unknown as PGliteLike;
+    await db.exec(`CREATE SCHEMA inventory`);
+    await db.exec(`CREATE TABLE public.a (id int)`);
+    await db.exec(`CREATE TABLE inventory.items (id int)`);
+    // Neither a view nor a sequence is a table (relkind 'r'), and the catalogs
+    // are excluded wholesale — otherwise validation would "miss" hundreds of
+    // system relations on the target.
+    await db.exec(`CREATE VIEW public.v AS SELECT 1 AS x`);
+    await db.exec(`CREATE SEQUENCE public.s`);
+
+    const keys = await tableKeys(like);
+
+    expect([...keys].sort()).toEqual(['inventory.items', 'public.a']);
     await db.close();
   });
 });

@@ -54,6 +54,24 @@ export function regclassLiteral(schema: string, name: string): string {
 }
 
 /**
+ * The {@link tableKey} of every user table on a cluster.
+ *
+ * Deliberately lighter than `introspectSchema`: callers that only need to know
+ * *which* tables exist — validation, chiefly, so it can report a table the
+ * target lacks instead of blowing up counting rows in it — should not pay for a
+ * per-table column query they will not read.
+ */
+export async function tableKeys(db: PGliteLike): Promise<string[]> {
+  const { rows } = await db.query<{ key: string }>(
+    `SELECT n.nspname || '.' || c.relname AS key
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'r' AND ${systemSchemaFilter('n.nspname')}`,
+  );
+  return rows.map((r) => r.key);
+}
+
+/**
  * Count rows currently in a (pre-quoted, qualified) table. Version-agnostic.
  *
  * `count(*)` returns `bigint`, read here as text rather than cast to `int`: the
