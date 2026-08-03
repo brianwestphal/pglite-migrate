@@ -1,4 +1,4 @@
-import { countRows, tableKey } from './catalog.js';
+import { countRows, tableKey, tableKeys } from './catalog.js';
 import { quoteIdent, quoteLiteral, quoteQualified } from './ident.js';
 import { introspectSchema } from './introspect.js';
 import type {
@@ -83,8 +83,28 @@ function comparableColumns(source: TableInfo, targetColumns: Set<string>): Colum
   };
 }
 
-/** Map of qualified table key → its column names, for one cluster. */
-async function columnsByTable(db: PGliteLike): Promise<Map<string, Set<string>>> {
+/**
+ * What the target actually has: a qualified table key for every user table,
+ * mapped to its column names at the `full` level and to `null` at `counts`.
+ *
+ * The three states are all meaningful, which is why this is one map rather than
+ * a set plus a map:
+ * - **key absent** — the target does not have that table at all.
+ * - **`null`** — the table exists; its columns were not read, because `counts`
+ *   does not need them and introspecting a whole cluster is not free.
+ * - **a `Set`** — the table exists and these are its columns.
+ *
+ * Both levels need the key set: counting rows in a table the target does not
+ * have raises `relation "…" does not exist`, which used to abort the entire
+ * report and hide every other table's result (PGLM-101).
+ */
+async function targetTableMap(
+  db: PGliteLike,
+  level: Exclude<ValidationLevel, 'off'>,
+): Promise<Map<string, Set<string> | null>> {
+  if (level !== 'full') {
+    return new Map((await tableKeys(db)).map((key) => [key, null]));
+  }
   const schema = await introspectSchema(db);
   return new Map(schema.tables.map((t) => [tableKey(t), new Set(t.columns.map((c) => c.name))]));
 }
@@ -106,7 +126,11 @@ async function sequenceValue(db: PGliteLike, schema: string, name: string): Prom
  * each target sequence is at least as advanced as the source. Reads only; never
  * mutates. Returns a report whose `ok` is true only if every check passed.
  *
- * At the `full` level the target is introspected once so each table's digest
+ * The target's table set is read once up front at every level, so a table the
+ * target does not have is reported as `missingTable` rather than aborting the
+ * run — one absent table used to hide every other table's result (PGLM-101).
+ *
+ * At the `full` level that same pass reads columns too, so each table's digest
  * can be taken over the columns the two sides share (PGLM-99). Columns the
  * target lacks are reported as `missingColumns` and fail the table outright —
  * that is data the migration could not carry. Target-only columns are reported
@@ -123,20 +147,30 @@ export async function validateMigration(
   schema: SchemaInfo,
   level: Exclude<ValidationLevel, 'off'>,
 ): Promise<ValidationReport> {
-  // Only the digest level needs the target's layout, and introspecting a whole
-  // cluster is not free — keep the default `counts` level as cheap as it was.
-  const targetColumns = level === 'full' ? await columnsByTable(target) : null;
+  const targetTables = await targetTableMap(target, level);
 
   const tables: TableValidation[] = [];
   for (const t of schema.tables) {
+    const key = tableKey(t);
     const qualified = quoteQualified(t.schema, t.name);
     const sourceRows = await countRows(source, qualified);
+
+    // `undefined` means the target has no such table (as opposed to `null`,
+    // which means it has one whose columns this level did not read). Report it
+    // and move on: counting rows in it would throw, taking every later table's
+    // result down with it (PGLM-101).
+    const targetColumns = targetTables.get(key);
+    if (targetColumns === undefined) {
+      tables.push({ table: key, sourceRows, targetRows: 0, missingTable: true, ok: false });
+      continue;
+    }
+
     const targetRows = await countRows(target, qualified);
     let ok = sourceRows === targetRows;
-    const entry: TableValidation = { table: tableKey(t), sourceRows, targetRows, ok };
+    const entry: TableValidation = { table: key, sourceRows, targetRows, ok };
 
     if (targetColumns !== null) {
-      const cols = comparableColumns(t, targetColumns.get(tableKey(t)) ?? new Set());
+      const cols = comparableColumns(t, targetColumns);
       entry.comparedColumns = cols.compared;
       if (cols.missing.length > 0) entry.missingColumns = cols.missing;
       if (cols.extra.length > 0) entry.extraColumns = cols.extra;

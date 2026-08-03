@@ -16,8 +16,8 @@ describe('parseArgs', () => {
       target: 'dst',
       sourceEngine: '@electric-sql/pglite',
       targetEngine: '@electric-sql/pglite',
-      sourceDatabase: undefined,
-      targetDatabase: undefined,
+      sourceOptions: undefined,
+      targetOptions: undefined,
       validate: 'counts',
       onExisting: 'error',
       onValidationFailure: 'report',
@@ -45,9 +45,85 @@ describe('parseArgs', () => {
 
   it('honors --source-database / --target-database (PGLM-100)', () => {
     const args = parseArgs(['src', 'dst', '--source-database', 'template1']);
-    expect(args).toMatchObject({ sourceDatabase: 'template1', targetDatabase: undefined });
-    expect(parseArgs(['src', 'dst', '--target-database', 'postgres'])).toMatchObject({
-      targetDatabase: 'postgres',
+    expect(args?.sourceOptions).toEqual({ database: 'template1' });
+    expect(args?.targetOptions).toBeUndefined();
+    expect(parseArgs(['src', 'dst', '--target-database', 'postgres'])?.targetOptions).toEqual({
+      database: 'postgres',
+    });
+  });
+
+  // PGLM-102. Everything from argv is a string, but PGlite's options are not:
+  // `relaxedDurability` is a boolean and `debug` a number, so the value has to
+  // be coerced — JSON when it parses as JSON, the raw string otherwise.
+  describe('--source-option / --target-option (PGLM-102)', () => {
+    /** `sourceOptions` after parsing a single `--source-option k=v`. */
+    function opt(pair: string): Record<string, unknown> | undefined {
+      return parseArgs(['src', 'dst', '--source-option', pair])?.sourceOptions;
+    }
+
+    it('reads JSON scalars as their JSON types', () => {
+      expect(opt('relaxedDurability=true')).toEqual({ relaxedDurability: true });
+      expect(opt('relaxedDurability=false')).toEqual({ relaxedDurability: false });
+      expect(opt('debug=1')).toEqual({ debug: 1 });
+      expect(opt('x=null')).toEqual({ x: null });
+      expect(opt('x=1.5')).toEqual({ x: 1.5 });
+    });
+
+    it('leaves a value that is not valid JSON as a plain string', () => {
+      expect(opt('database=template1')).toEqual({ database: 'template1' });
+      expect(opt('dataDir=/var/lib/pg')).toEqual({ dataDir: '/var/lib/pg' });
+      // Empty value: `JSON.parse('')` throws, so it lands as the empty string.
+      expect(opt('x=')).toEqual({ x: '' });
+    });
+
+    it('lets an explicit JSON string force a string that looks like JSON', () => {
+      // The escape hatch for the one genuine ambiguity in the rule above.
+      expect(opt('label="true"')).toEqual({ label: 'true' });
+      expect(opt('label="1"')).toEqual({ label: '1' });
+    });
+
+    it('splits on the first = so a value may contain one', () => {
+      expect(opt('conn=host=local')).toEqual({ conn: 'host=local' });
+    });
+
+    it('accepts JSON objects and arrays', () => {
+      expect(opt('nested={"a":1}')).toEqual({ nested: { a: 1 } });
+      expect(opt('list=[1,2]')).toEqual({ list: [1, 2] });
+    });
+
+    it('is repeatable, and accumulates per side independently', () => {
+      const args = parseArgs([
+        'src', 'dst',
+        '--source-option', 'relaxedDurability=true',
+        '--source-option', 'debug=2',
+        '--target-option', 'debug=0',
+      ]);
+      expect(args?.sourceOptions).toEqual({ relaxedDurability: true, debug: 2 });
+      expect(args?.targetOptions).toEqual({ debug: 0 });
+    });
+
+    it('treats --source-database as sugar for the same key, last one winning', () => {
+      // Both write `database`, so precedence is plain argv order — no special case.
+      expect(
+        parseArgs(['src', 'dst', '--source-database', 'a', '--source-option', 'database=b'])
+          ?.sourceOptions,
+      ).toEqual({ database: 'b' });
+      expect(
+        parseArgs(['src', 'dst', '--source-option', 'database=b', '--source-database', 'a'])
+          ?.sourceOptions,
+      ).toEqual({ database: 'a' });
+    });
+
+    it('rejects a pair with no key or no =', () => {
+      expect(() => parseArgs(['src', 'dst', '--source-option', 'nokey'])).toThrow(
+        /Invalid --source-option value: nokey \(expected key=value\)/,
+      );
+      expect(() => parseArgs(['src', 'dst', '--source-option', '=novalue'])).toThrow(
+        /Invalid --source-option value/,
+      );
+      expect(() => parseArgs(['src', 'dst', '--target-option', 'nokey'])).toThrow(
+        /Invalid --target-option value/,
+      );
     });
   });
 
@@ -250,6 +326,26 @@ describe('run', () => {
 
     err = [];
     const code = await run([source, target, '--source-database', 'template1'], io);
+
+    expect(code).toBe(0);
+    expect(err.join('\n')).toContain('Done: 4 rows across 2 tables, 2 sequences aligned.');
+  }, 30_000);
+
+  // PGLM-102: the general form has to reach the engine the same way the
+  // purpose-built flag does — it is the same `pgliteOptions` bag either way.
+  it('reaches the engine through the general --source-option form too', async () => {
+    const source = join(dir, 'legacy-source-generic');
+    const legacy = new PGlite(source, { database: 'template1' });
+    await legacy.exec(SCHEMA_SQL);
+    await legacy.exec(SEED_SQL);
+    await legacy.close();
+
+    const target = await seedDir('target', SCHEMA_SQL);
+
+    const code = await run(
+      [source, target, '--source-option', 'database=template1', '--target-option', 'debug=0'],
+      io,
+    );
 
     expect(code).toBe(0);
     expect(err.join('\n')).toContain('Done: 4 rows across 2 tables, 2 sequences aligned.');

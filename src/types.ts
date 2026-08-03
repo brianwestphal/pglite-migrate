@@ -189,10 +189,17 @@ export interface TableValidation {
   sourceRows: number;
   targetRows: number;
   /**
+   * True when the target has no such table at all — the strongest failure this
+   * report carries, and the reason `targetRows` reads 0 rather than being
+   * counted (counting would raise `relation "…" does not exist`). Checked at
+   * every level; omitted when the table is present.
+   */
+  missingTable?: boolean;
+  /**
    * Present only at the `full` level, and only when a digest was actually
    * taken: whether the content digests matched. Absent when the row counts
-   * already diverged, when a source column is missing on the target, or when
-   * the table has no comparable columns at all.
+   * already diverged, when the target lacks the table or a source column, or
+   * when the table has no comparable columns at all.
    */
   digestMatch?: boolean;
   /**

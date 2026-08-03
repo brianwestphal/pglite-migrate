@@ -181,6 +181,66 @@ describe('validateMigration', () => {
     });
   });
 
+  // PGLM-101: counting rows in a table the target does not have raises
+  // `relation "…" does not exist`, which used to abort the whole run — so one
+  // absent table hid every other table's result.
+  describe('a table the target lacks (PGLM-101)', () => {
+    /** Source with two tables; target with only the second. */
+    async function seedMissingTable(): Promise<void> {
+      await source.exec(`CREATE TABLE gone (id integer PRIMARY KEY)`);
+      await source.exec(`INSERT INTO gone VALUES (1), (2)`);
+      await source.exec(`CREATE TABLE kept (id integer PRIMARY KEY)`);
+      await source.exec(`INSERT INTO kept VALUES (1)`);
+      await target.exec(`CREATE TABLE kept (id integer PRIMARY KEY)`);
+      await target.exec(`INSERT INTO kept VALUES (1)`);
+    }
+
+    for (const level of ['counts', 'full'] as const) {
+      it(`reports it at the ${level} level and still validates the rest`, async () => {
+        await seedMissingTable();
+
+        const schema = await introspectSchema(source);
+        const report = await validateMigration(source, target, schema, level);
+
+        expect(report.ok).toBe(false);
+        const gone = report.tables.find((t) => t.table === 'public.gone');
+        expect(gone).toMatchObject({ missingTable: true, sourceRows: 2, targetRows: 0, ok: false });
+        // The whole point: the other table is still reported, and still passes.
+        const kept = report.tables.find((t) => t.table === 'public.kept');
+        expect(kept?.ok).toBe(true);
+        expect(kept?.missingTable).toBeUndefined();
+        expect(report.tables).toHaveLength(2);
+      });
+    }
+
+    it('takes no digest for a missing table', async () => {
+      await seedMissingTable();
+
+      const schema = await introspectSchema(source);
+      const report = await validateMigration(source, target, schema, 'full');
+
+      const gone = report.tables.find((t) => t.table === 'public.gone');
+      // Nothing to compare against, so none of the column detail is meaningful.
+      expect(gone?.digestMatch).toBeUndefined();
+      expect(gone?.comparedColumns).toBeUndefined();
+      expect(gone?.missingColumns).toBeUndefined();
+    });
+
+    it('marks a present-but-empty target table as present, not missing', async () => {
+      // The distinction that matters: an empty table is a count failure the
+      // operator can act on; an absent one is a schema failure.
+      await source.exec(`CREATE TABLE t (id integer PRIMARY KEY)`);
+      await source.exec(`INSERT INTO t VALUES (1)`);
+      await target.exec(`CREATE TABLE t (id integer PRIMARY KEY)`);
+
+      const schema = await introspectSchema(source);
+      const report = await validateMigration(source, target, schema, 'full');
+
+      expect(report.tables[0]).toMatchObject({ sourceRows: 1, targetRows: 0, ok: false });
+      expect(report.tables[0].missingTable).toBeUndefined();
+    });
+  });
+
   it('flags a sequence that is behind on the target', async () => {
     await source.exec(`CREATE TABLE t (id serial PRIMARY KEY)`);
     await source.exec(`INSERT INTO t DEFAULT VALUES; INSERT INTO t DEFAULT VALUES;`); // seq -> 2

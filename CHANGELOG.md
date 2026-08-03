@@ -8,9 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `validateMigration` no longer throws when the target lacks a table the source has. It counted rows on the target before checking the table existed, so `relation "…" does not exist` escaped as an exception and the caller got no report at all — meaning one absent table hid every other table's result. Such a table is now a reported failure carrying `missingTable: true`, at both the `counts` and `full` levels, and validation continues with the rest.
+
 - `validateMigration(..., 'full')` no longer reports a mismatch for tables whose data migrated perfectly but whose columns sit in a different physical order on the target. The per-table digest hashed a whole-row `::text`, which Postgres renders in ordinal-position order, so it encoded the table's column *layout* along with its content. This is the norm in the app-driven path — the source reached its schema by `ALTER TABLE ADD COLUMN` (which appends) while the target was built from the host app's current `CREATE TABLE` — which made `full` unusable as a pass/fail gate there. The digest is now taken over the source/target column intersection, projected in the same name-sorted order on both sides.
 
 ### Added
+
+- CLI `--source-option <k=v>` / `--target-option <k=v>` (repeatable) reach every other PGlite constructor option — `relaxedDurability`, `debug`, and anything else the engine takes. Values are read as JSON when they parse as JSON and as plain strings otherwise, so `relaxedDurability=true` is a boolean and `debug=1` a number while `database=template1` stays a string; quote a value to force a string that looks like JSON (`label='"true"'`). `--source-database` is sugar for `--source-option database=<v>`. Options taking JavaScript values (`extensions`) remain library-only.
 
 - `openDataDir` accepts `pgliteOptions`, forwarded verbatim to the PGlite constructor on both the resolved and the acquired path — and the CLI gained `--source-database` / `--target-database`. PGlite 0.4.0 moved the default working database from `template1` to `postgres`, so a cluster written by an older PGlite keeps its tables where a default open never looks: every query fails with `relation "…" does not exist`, and a migration of such a source "succeeds" having transferred nothing. Previously the only way through was to skip `openDataDir` and hand-roll the engine import, reimplementing the resolve-then-acquire logic it exists to provide. New requirements doc: `docs/18-engine-construction-options.md`.
 
