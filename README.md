@@ -102,6 +102,7 @@ pglite-migrate <source-data-dir> <target-data-dir> [options]
 | --- | --- |
 | `--source-engine <pkg>` / `--target-engine <pkg>` | npm module/alias for each engine (default `@electric-sql/pglite`) |
 | `--source-database <db>` / `--target-database <db>` | Database to open inside each cluster (PGlite's own default otherwise) |
+| `--source-option <k=v>` / `--target-option <k=v>` | Any other PGlite constructor option; repeatable. Values are JSON when they parse as JSON, strings otherwise |
 | `--fetch-missing-engine` | Download a pinned engine when the named one is not installed (off by default) |
 | `--engine-cache <mode>` | Retention for a downloaded engine: `keep` \| `ephemeral` (default `keep`) |
 | `--engine-cache-dir <path>` | Where to store downloaded engines (default: an OS cache directory) |

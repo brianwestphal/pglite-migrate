@@ -30,7 +30,7 @@ src/
     registry.ts   Pinned Postgres-major → PGlite version + sha512 table; resolveEngine / knownMajors / UnknownMajorError
     acquire.ts    acquireEngine(major) / acquireRelease(release): download → verify pinned hash → extract → resolveEntry; cache 'keep' (default) | 'ephemeral'
     tar.ts        extractTarGz: hand-rolled, zero-dep, security-hardened (refuses links/devices/traversal/bad checksums; ignores archive modes)
-  cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run. reportValidation prints per-table/per-sequence detail on failure only (incl. missingColumns). --source-database/--target-database map to pgliteOptions.database (PGLM-100)
+  cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run. reportValidation prints per-table/per-sequence detail on failure only (incl. missingColumns). --source-database/--target-database map to pgliteOptions.database (PGLM-100); --source-option/--target-option k=v (repeatable) set any key, value = JSON.parse or the raw string on failure, split on the FIRST = (PGLM-102). Both accumulate into CliArgs.sourceOptions/targetOptions, left undefined when no flag was passed so construct() still uses one argument
 tests/
   topo / version / ident / catalog / fsutil .test.ts   Pure unit tests (catalog: tableKey/objectKey/systemSchemaFilter/regclassLiteral + countRows/hasRows/tableKeys; fsutil: exists/sanitizedTimestamp/errorCode)
   introspect(.edge).test.ts              Introspection (basic + edge: multi-schema, dropped/qualified FK/composite, generated/identity, type qualifiers)

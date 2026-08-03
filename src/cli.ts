@@ -29,6 +29,8 @@ Options:
   --target-engine <pkg>   npm module/alias for the target engine (default: @electric-sql/pglite)
   --source-database <db>  Database to open on the source (PGlite's own default otherwise).
   --target-database <db>  Database to open on the target (PGlite's own default otherwise).
+  --source-option <k=v>   Any other PGlite constructor option for the source. Repeatable.
+  --target-option <k=v>   Any other PGlite constructor option for the target. Repeatable.
   --fetch-missing-engine  Download a pinned engine when the named one is not installed.
   --engine-cache <mode>   Retention for a downloaded engine: keep | ephemeral (default: keep)
   --engine-cache-dir <p>  Where to store downloaded engines (default: an OS cache directory).
@@ -54,17 +56,28 @@ code from the npm registry, so it is off unless you ask for it.
 
 PGlite 0.4.0 changed the default working database from template1 to postgres.
 If a cluster was written by an older PGlite, its tables live in template1 and a
-default open finds nothing — pass --source-database template1 for that side.`;
+default open finds nothing — pass --source-database template1 for that side.
+
+--source-option / --target-option values are read as JSON when they parse as
+JSON and as plain strings otherwise, so relaxedDurability=true is a boolean and
+debug=1 a number, while database=template1 stays a string. To force a string
+that looks like JSON, quote it: --source-option label='"true"'. Options taking
+JavaScript values (notably extensions) cannot be expressed on a command line at
+all — use the library's pgliteOptions for those.`;
 
 interface CliArgs {
   source: string;
   target: string;
   sourceEngine: string;
   targetEngine: string;
-  /** PGlite `database` option for the source; undefined leaves PGlite's default. */
-  sourceDatabase?: string;
-  /** PGlite `database` option for the target; undefined leaves PGlite's default. */
-  targetDatabase?: string;
+  /**
+   * PGlite constructor options for the source, from `--source-database` and
+   * `--source-option`. Left `undefined` when neither was passed, so the engine
+   * is constructed with a single argument (FR-18.3).
+   */
+  sourceOptions?: Record<string, unknown>;
+  /** The same for the target. */
+  targetOptions?: Record<string, unknown>;
   validate: ValidationLevel;
   onValidationFailure: OnValidationFailure;
   onExisting: OnExisting;
@@ -99,6 +112,36 @@ function parseEngineCache(value: string): EngineCacheMode {
   throw new Error(`Invalid --engine-cache mode: ${value} (expected keep or ephemeral)`);
 }
 
+/**
+ * Read a `--source-option` / `--target-option` value.
+ *
+ * Everything arriving from argv is a string, but PGlite's options are not all
+ * strings — `relaxedDurability` is a boolean, `debug` a number. JSON is the
+ * coercion rule because it covers every scalar the engine takes with syntax an
+ * operator already knows, and because it degrades usefully: a value that is not
+ * valid JSON (`template1`, `/some/path`) is simply the string it looks like.
+ *
+ * The one ambiguity that leaves is a string whose text happens to be valid
+ * JSON. `--source-option k='"true"'` forces it, which is why this falls back to
+ * the raw string rather than rejecting a failed parse.
+ */
+function parseOptionValue(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/** Parse a `k=v` option pair, splitting on the first `=` so values may contain one. */
+function parseOptionPair(flag: string, raw: string): [string, unknown] {
+  const eq = raw.indexOf('=');
+  if (eq <= 0) {
+    throw new Error(`Invalid ${flag} value: ${raw} (expected key=value)`);
+  }
+  return [raw.slice(0, eq), parseOptionValue(raw.slice(eq + 1))];
+}
+
 function parseKeep(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) {
@@ -115,8 +158,16 @@ export function parseArgs(argv: string[]): CliArgs | null {
   const positionals: string[] = [];
   let sourceEngine = '@electric-sql/pglite';
   let targetEngine = '@electric-sql/pglite';
-  let sourceDatabase: string | undefined;
-  let targetDatabase: string | undefined;
+  // Built lazily so "no engine options at all" stays distinguishable from "an
+  // empty options object" — see FR-18.3.
+  let sourceOptions: Record<string, unknown> | undefined;
+  let targetOptions: Record<string, unknown> | undefined;
+  const setSource = (key: string, value: unknown): void => {
+    sourceOptions = { ...sourceOptions, [key]: value };
+  };
+  const setTarget = (key: string, value: unknown): void => {
+    targetOptions = { ...targetOptions, [key]: value };
+  };
   let validate: ValidationLevel = 'counts';
   let onValidationFailure: OnValidationFailure = 'report';
   let onExisting: OnExisting = 'error';
@@ -138,9 +189,15 @@ export function parseArgs(argv: string[]): CliArgs | null {
     } else if (arg === '--target-engine') {
       targetEngine = argv[++i] ?? '';
     } else if (arg === '--source-database') {
-      sourceDatabase = argv[++i] ?? '';
+      // Sugar for `--source-option database=<v>`; both write the same key, so
+      // whichever comes last in argv wins, with no special-case precedence.
+      setSource('database', argv[++i] ?? '');
     } else if (arg === '--target-database') {
-      targetDatabase = argv[++i] ?? '';
+      setTarget('database', argv[++i] ?? '');
+    } else if (arg === '--source-option') {
+      setSource(...parseOptionPair(arg, argv[++i] ?? ''));
+    } else if (arg === '--target-option') {
+      setTarget(...parseOptionPair(arg, argv[++i] ?? ''));
     } else if (arg === '--validate') {
       validate = parseValidationLevel(argv[++i] ?? '');
     } else if (arg === '--strict') {
@@ -180,8 +237,8 @@ export function parseArgs(argv: string[]): CliArgs | null {
     target: positionals[1],
     sourceEngine,
     targetEngine,
-    sourceDatabase,
-    targetDatabase,
+    sourceOptions,
+    targetOptions,
     validate,
     onValidationFailure,
     onExisting,
@@ -218,17 +275,22 @@ const defaultIO: CliIO = {
  * The already-read `PG_VERSION` is passed through as `major` so acquisition
  * still works for a target directory that does not exist yet.
  *
- * `database` is left off entirely unless the operator named one, so the common
- * invocation still constructs the engine with no options object at all.
+ * `pgliteOptions` is left off entirely unless the operator passed at least one
+ * engine option, so the common invocation still constructs the engine with no
+ * options object at all (FR-18.3).
  */
-function openOptions(args: CliArgs, major: number | null, database?: string): OpenOptions {
+function openOptions(
+  args: CliArgs,
+  major: number | null,
+  pgliteOptions?: Record<string, unknown>,
+): OpenOptions {
   const options: OpenOptions = { fetchMissingEngine: args.fetchMissingEngine };
   if (args.fetchMissingEngine) {
     options.cache = args.engineCache;
     if (args.engineCacheDir !== undefined) options.cacheDir = args.engineCacheDir;
     if (major !== null) options.major = major;
   }
-  if (database !== undefined) options.pgliteOptions = { database };
+  if (pgliteOptions !== undefined) options.pgliteOptions = pgliteOptions;
   return options;
 }
 
@@ -313,7 +375,7 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
     source = await openDataDir(
       args.source,
       args.sourceEngine,
-      openOptions(args, sourceVersion, args.sourceDatabase),
+      openOptions(args, sourceVersion, args.sourceOptions),
     );
     reportAcquired(io, 'source', source);
     await assertEngineMatchesDataDir(source, {
@@ -326,7 +388,7 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
     target = await openDataDir(
       args.target,
       args.targetEngine,
-      openOptions(args, targetVersion, args.targetDatabase),
+      openOptions(args, targetVersion, args.targetOptions),
     );
     reportAcquired(io, 'target', target);
     if (!args.dryRun) {
