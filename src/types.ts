@@ -188,8 +188,31 @@ export interface TableValidation {
   table: string;
   sourceRows: number;
   targetRows: number;
-  /** Present only at the `full` level: whether the content digests matched. */
+  /**
+   * Present only at the `full` level, and only when a digest was actually
+   * taken: whether the content digests matched. Absent when the row counts
+   * already diverged, when a source column is missing on the target, or when
+   * the table has no comparable columns at all.
+   */
   digestMatch?: boolean;
+  /**
+   * Present only at the `full` level: the columns the digest compared — the
+   * source/target intersection, name-sorted. Recorded so a mismatch is
+   * diagnosable without re-deriving which columns took part (PGLM-99).
+   */
+  comparedColumns?: string[];
+  /**
+   * Source columns the target does not have. Real data loss, so the table fails.
+   * Present only at the `full` level, and omitted when empty.
+   */
+  missingColumns?: string[];
+  /**
+   * Columns the target has and the source does not. Expected whenever the host
+   * app is on a newer schema than the data being migrated, so these are
+   * reported but do **not** fail the table. Present only at the `full` level,
+   * and omitted when empty.
+   */
+  extraColumns?: string[];
   ok: boolean;
 }
 

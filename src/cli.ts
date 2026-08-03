@@ -27,6 +27,8 @@ Arguments:
 Options:
   --source-engine <pkg>   npm module/alias for the source engine (default: @electric-sql/pglite)
   --target-engine <pkg>   npm module/alias for the target engine (default: @electric-sql/pglite)
+  --source-database <db>  Database to open on the source (PGlite's own default otherwise).
+  --target-database <db>  Database to open on the target (PGlite's own default otherwise).
   --fetch-missing-engine  Download a pinned engine when the named one is not installed.
   --engine-cache <mode>   Retention for a downloaded engine: keep | ephemeral (default: keep)
   --engine-cache-dir <p>  Where to store downloaded engines (default: an OS cache directory).
@@ -48,13 +50,21 @@ functions, RLS, partitioning) are reported, not recreated.
 
 Engines are resolved from node_modules first; --fetch-missing-engine only
 applies when a named engine does not resolve at all. It downloads and then runs
-code from the npm registry, so it is off unless you ask for it.`;
+code from the npm registry, so it is off unless you ask for it.
+
+PGlite 0.4.0 changed the default working database from template1 to postgres.
+If a cluster was written by an older PGlite, its tables live in template1 and a
+default open finds nothing — pass --source-database template1 for that side.`;
 
 interface CliArgs {
   source: string;
   target: string;
   sourceEngine: string;
   targetEngine: string;
+  /** PGlite `database` option for the source; undefined leaves PGlite's default. */
+  sourceDatabase?: string;
+  /** PGlite `database` option for the target; undefined leaves PGlite's default. */
+  targetDatabase?: string;
   validate: ValidationLevel;
   onValidationFailure: OnValidationFailure;
   onExisting: OnExisting;
@@ -105,6 +115,8 @@ export function parseArgs(argv: string[]): CliArgs | null {
   const positionals: string[] = [];
   let sourceEngine = '@electric-sql/pglite';
   let targetEngine = '@electric-sql/pglite';
+  let sourceDatabase: string | undefined;
+  let targetDatabase: string | undefined;
   let validate: ValidationLevel = 'counts';
   let onValidationFailure: OnValidationFailure = 'report';
   let onExisting: OnExisting = 'error';
@@ -125,6 +137,10 @@ export function parseArgs(argv: string[]): CliArgs | null {
       sourceEngine = argv[++i] ?? '';
     } else if (arg === '--target-engine') {
       targetEngine = argv[++i] ?? '';
+    } else if (arg === '--source-database') {
+      sourceDatabase = argv[++i] ?? '';
+    } else if (arg === '--target-database') {
+      targetDatabase = argv[++i] ?? '';
     } else if (arg === '--validate') {
       validate = parseValidationLevel(argv[++i] ?? '');
     } else if (arg === '--strict') {
@@ -164,6 +180,8 @@ export function parseArgs(argv: string[]): CliArgs | null {
     target: positionals[1],
     sourceEngine,
     targetEngine,
+    sourceDatabase,
+    targetDatabase,
     validate,
     onValidationFailure,
     onExisting,
@@ -199,14 +217,18 @@ const defaultIO: CliIO = {
  *
  * The already-read `PG_VERSION` is passed through as `major` so acquisition
  * still works for a target directory that does not exist yet.
+ *
+ * `database` is left off entirely unless the operator named one, so the common
+ * invocation still constructs the engine with no options object at all.
  */
-function openOptions(args: CliArgs, major: number | null): OpenOptions {
+function openOptions(args: CliArgs, major: number | null, database?: string): OpenOptions {
   const options: OpenOptions = { fetchMissingEngine: args.fetchMissingEngine };
   if (args.fetchMissingEngine) {
     options.cache = args.engineCache;
     if (args.engineCacheDir !== undefined) options.cacheDir = args.engineCacheDir;
     if (major !== null) options.major = major;
   }
+  if (database !== undefined) options.pgliteOptions = { database };
   return options;
 }
 
@@ -233,9 +255,16 @@ function reportValidation(io: CliIO, validation: ValidationReport): void {
   if (!validation.ok) {
     for (const t of validation.tables) {
       const mark = t.ok ? '=' : '≠';
-      const digest = t.digestMatch === false ? ' (digest mismatch)' : '';
+      const notes: string[] = [];
+      if (t.digestMatch === false) notes.push('digest mismatch');
+      // Naming the missing columns is the whole diagnostic here: the counts
+      // match, so without them a failed table looks identical to a digest drift.
+      if (t.missingColumns !== undefined) {
+        notes.push(`missing on target: ${t.missingColumns.join(', ')}`);
+      }
+      const detail = notes.length > 0 ? ` (${notes.join('; ')})` : '';
       const counts = `${t.sourceRows.toString()} ${mark} ${t.targetRows.toString()}`;
-      io.err(`  ${t.table}: ${counts}${digest}`);
+      io.err(`  ${t.table}: ${counts}${detail}`);
     }
     for (const s of validation.sequences) {
       const mark = s.ok ? '>=' : '<';
@@ -280,7 +309,11 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
       const path = await backupDataDir(args.source, backupOptions);
       io.err(`Backed up source to ${path}`);
     }
-    source = await openDataDir(args.source, args.sourceEngine, openOptions(args, sourceVersion));
+    source = await openDataDir(
+      args.source,
+      args.sourceEngine,
+      openOptions(args, sourceVersion, args.sourceDatabase),
+    );
     reportAcquired(io, 'source', source);
     await assertEngineMatchesDataDir(source, {
       dataDir: args.source,
@@ -289,7 +322,11 @@ export async function run(argv: string[], io: CliIO = defaultIO): Promise<number
       engine: args.sourceEngine,
     });
 
-    target = await openDataDir(args.target, args.targetEngine, openOptions(args, targetVersion));
+    target = await openDataDir(
+      args.target,
+      args.targetEngine,
+      openOptions(args, targetVersion, args.targetDatabase),
+    );
     reportAcquired(io, 'target', target);
     if (!args.dryRun) {
       // Skipped under --dry-run: the check has to query the target, which boots

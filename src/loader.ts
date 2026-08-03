@@ -44,6 +44,26 @@ export interface OpenOptions {
    * that already know the engine version they want.
    */
   release?: EngineRelease;
+  /**
+   * Options forwarded verbatim to the PGlite constructor as its second
+   * argument, on both the resolved and the acquired path.
+   *
+   * The motivating case is `{ database: 'template1' }`: PGlite 0.4.0 changed
+   * the default working database from `template1` to `postgres`, so a cluster
+   * written by an older PGlite has its tables in a database that a bare
+   * `new PGlite(dir)` does not open — every query then fails with
+   * `relation "…" does not exist` even though the data is intact. The same gap
+   * applies to anything else PGlite accepts (`relaxedDurability`, `extensions`,
+   * `debug`, …).
+   *
+   * Deliberately a distinct key rather than spreading {@link OpenOptions}
+   * itself: this library's own options and PGlite's cannot then collide, and
+   * which is which stays obvious at the call site. Typed loosely on purpose —
+   * the core never imports `@electric-sql/pglite`, and the accepted options
+   * differ between the two engine versions a cross-major run holds open at
+   * once. PGlite ignores keys it does not know.
+   */
+  pgliteOptions?: Record<string, unknown>;
 }
 
 /** Node error codes that mean "this specifier does not resolve". */
@@ -78,13 +98,35 @@ async function importEngine(modulePath: string): Promise<unknown> {
   return import(specifier);
 }
 
+/** The PGlite constructor shape this module needs: a data dir plus opaque options. */
+type PGliteConstructor = new (dir: string, options?: Record<string, unknown>) => OpenedCluster;
+
 /** Pull the `PGlite` constructor out of an imported module. */
-function constructorFrom(mod: unknown, modulePath: string): new (dir: string) => OpenedCluster {
-  const PGlite = (mod as { PGlite?: new (dir: string) => OpenedCluster }).PGlite;
+function constructorFrom(mod: unknown, modulePath: string): PGliteConstructor {
+  const PGlite = (mod as { PGlite?: PGliteConstructor }).PGlite;
   if (typeof PGlite !== 'function') {
     throw new Error(`Module ${modulePath} does not export a PGlite constructor`);
   }
   return PGlite;
+}
+
+/**
+ * Construct the engine, forwarding {@link OpenOptions.pgliteOptions} when the
+ * caller supplied any.
+ *
+ * The no-options case calls the constructor with a single argument rather than
+ * passing an explicit `undefined`, so omitting `pgliteOptions` is byte-identical
+ * to the previous `new PGlite(dataDir)` and cannot perturb an engine that
+ * distinguishes "no options object" from "an empty one".
+ */
+function construct(
+  mod: unknown,
+  modulePath: string,
+  dataDir: string,
+  pgliteOptions: Record<string, unknown> | undefined,
+): OpenedCluster {
+  const Engine = constructorFrom(mod, modulePath);
+  return pgliteOptions === undefined ? new Engine(dataDir) : new Engine(dataDir, pgliteOptions);
 }
 
 /** Build the error shown when an engine is missing and acquisition is off. */
@@ -127,9 +169,14 @@ async function missingEngineError(
  * Resolution is always tried first: an installed engine wins, and acquisition
  * only happens when the specifier does not resolve at all.
  *
+ * Pass {@link OpenOptions.pgliteOptions} to reach PGlite's own constructor
+ * options — most often `{ database: 'template1' }` for a cluster written before
+ * PGlite 0.4.0 moved the default working database.
+ *
  * @param dataDir - Path to the PGlite data directory to open.
  * @param modulePath - npm specifier, alias, or absolute path of the engine.
- * @param options - Acquisition and caching behavior; see {@link OpenOptions}.
+ * @param options - Acquisition, caching, and engine-construction behavior; see
+ * {@link OpenOptions}.
  * @throws When the engine cannot be loaded, with the install command and the
  * opt-in flag spelled out.
  */
@@ -148,7 +195,7 @@ export async function openDataDir(
     }
     return openAcquired(dataDir, options);
   }
-  return new (constructorFrom(mod, modulePath))(dataDir);
+  return construct(mod, modulePath, dataDir, options.pgliteOptions);
 }
 
 /**
@@ -169,7 +216,7 @@ async function openAcquired(dataDir: string, options: OpenOptions): Promise<Open
       ? await acquireRelease(options.release, acquireOptions)
       : await acquireEngine(options.major ?? (await readClusterVersion(dataDir)), acquireOptions);
   const mod = await importEngine(engine.entry);
-  const cluster = new (constructorFrom(mod, engine.entry))(dataDir);
+  const cluster = construct(mod, engine.entry, dataDir, options.pgliteOptions);
 
   // Closing the cluster releases the engine too, so an ephemeral copy is cleaned
   // up by the same `finally` a caller already writes around `close()`.
