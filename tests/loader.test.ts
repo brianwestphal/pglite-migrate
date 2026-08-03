@@ -74,6 +74,52 @@ describe('openDataDir', () => {
     }
   });
 
+  // PGLM-100. PGlite 0.4.0 moved the default working database from `template1`
+  // to `postgres`, so a cluster written by an older PGlite keeps its tables in
+  // a database a bare `new PGlite(dir)` never opens — the data is intact but
+  // every query fails with `relation "…" does not exist`.
+  describe('pgliteOptions passthrough', () => {
+    /** Seed a data dir whose table lives in `template1`, not the default database. */
+    async function seedTemplate1(dataDir: string): Promise<void> {
+      const { PGlite } = await import('@electric-sql/pglite');
+      const db = new PGlite(dataDir, { database: 'template1' });
+      await db.exec(`CREATE TABLE legacy (id integer PRIMARY KEY)`);
+      await db.exec(`INSERT INTO legacy VALUES (1), (2)`);
+      await db.close();
+    }
+
+    it('opens a cluster whose tables live in a non-default database', async () => {
+      const dataDir = join(dir, 'template1-era');
+      await seedTemplate1(dataDir);
+
+      const cluster = await openDataDir(dataDir, '@electric-sql/pglite', {
+        pgliteOptions: { database: 'template1' },
+      });
+      try {
+        const { rows } = await cluster.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM legacy`,
+        );
+        expect(rows[0].n).toBe('2');
+      } finally {
+        await cluster.close();
+      }
+    });
+
+    it('cannot reach that table without the option (the bug this fixes)', async () => {
+      const dataDir = join(dir, 'template1-era-default');
+      await seedTemplate1(dataDir);
+
+      const cluster = await openDataDir(dataDir);
+      try {
+        await expect(cluster.query(`SELECT * FROM legacy`)).rejects.toThrow(
+          /relation "legacy" does not exist/,
+        );
+      } finally {
+        await cluster.close();
+      }
+    });
+  });
+
   describe('resolve-first', () => {
     it('uses an installed engine without touching the registry', async () => {
       // registryUrl points at a closed port: any download attempt would fail.
@@ -220,6 +266,41 @@ describe('openDataDir', () => {
         expect(cluster.acquired).toEqual({ version: '9.9.9', fromCache: false });
         const { rows } = await cluster.query<{ dataDir: string }>('SELECT 1');
         expect(rows[0].dataDir).toBe(join(dir, 'data'));
+      } finally {
+        await cluster.close();
+      }
+    });
+
+    // Two construction sites exist (resolved and acquired); fixing one and
+    // missing the other is the easy mistake here (PGLM-100).
+    it('forwards pgliteOptions on the acquired path too', async () => {
+      const cluster = await openDataDir(join(dir, 'data'), 'pglite-nope', {
+        fetchMissingEngine: true,
+        release: RELEASE,
+        registryUrl: url,
+        cacheDir: join(dir, 'cache'),
+        pgliteOptions: { database: 'template1', relaxedDurability: true },
+      });
+      try {
+        const { rows } = await cluster.query<{ options: Record<string, unknown> }>('SELECT 1');
+        expect(rows[0].options).toEqual({ database: 'template1', relaxedDurability: true });
+      } finally {
+        await cluster.close();
+      }
+    });
+
+    it('constructs with a single argument when pgliteOptions is omitted', async () => {
+      const cluster = await openDataDir(join(dir, 'data'), 'pglite-nope', {
+        fetchMissingEngine: true,
+        release: RELEASE,
+        registryUrl: url,
+        cacheDir: join(dir, 'cache'),
+      });
+      try {
+        // Not just `options === undefined`: an engine that distinguishes "no
+        // second argument" from "an explicit undefined" must see the former.
+        const { rows } = await cluster.query<{ argc: number }>('SELECT 1');
+        expect(rows[0].argc).toBe(1);
       } finally {
         await cluster.close();
       }

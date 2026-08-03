@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `openDataDir` accepts `pgliteOptions`, forwarded verbatim to the PGlite constructor on both the resolved and the acquired path — and the CLI gained `--source-database` / `--target-database`. PGlite 0.4.0 moved the default working database from `template1` to `postgres`, so a cluster written by an older PGlite keeps its tables where a default open never looks: every query fails with `relation "…" does not exist`, and a migration of such a source "succeeds" having transferred nothing. Previously the only way through was to skip `openDataDir` and hand-roll the engine import, reimplementing the resolve-then-acquire logic it exists to provide. New requirements doc: `docs/18-engine-construction-options.md`.
+
 - `TableValidation` gained `comparedColumns`, `missingColumns`, and `extraColumns` (all `full`-level only). Source columns the target lacks now **fail** the table as an explicit, separately-reported check — and are named on the CLI's per-table failure line — rather than being caught only incidentally by the digest. Columns only the target has are reported and do **not** fail, since a host app on a newer schema than its data is the expected case.
 
 ## [2.0.1] - 2026-08-01

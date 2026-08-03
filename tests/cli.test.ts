@@ -16,6 +16,8 @@ describe('parseArgs', () => {
       target: 'dst',
       sourceEngine: '@electric-sql/pglite',
       targetEngine: '@electric-sql/pglite',
+      sourceDatabase: undefined,
+      targetDatabase: undefined,
       validate: 'counts',
       onExisting: 'error',
       onValidationFailure: 'report',
@@ -39,6 +41,14 @@ describe('parseArgs', () => {
   it('honors --source-engine / --target-engine overrides', () => {
     const args = parseArgs(['src', 'dst', '--source-engine', 'pglite-old', '--target-engine', 'pglite-new']);
     expect(args).toMatchObject({ sourceEngine: 'pglite-old', targetEngine: 'pglite-new' });
+  });
+
+  it('honors --source-database / --target-database (PGLM-100)', () => {
+    const args = parseArgs(['src', 'dst', '--source-database', 'template1']);
+    expect(args).toMatchObject({ sourceDatabase: 'template1', targetDatabase: undefined });
+    expect(parseArgs(['src', 'dst', '--target-database', 'postgres'])).toMatchObject({
+      targetDatabase: 'postgres',
+    });
   });
 
   it('returns null for -h / --help', () => {
@@ -220,6 +230,29 @@ describe('run', () => {
     } finally {
       await verify.close();
     }
+  }, 30_000);
+
+  // PGLM-100: a cluster written before PGlite 0.4.0 keeps its tables in
+  // `template1`, which the CLI could not reach at all before these flags.
+  it('migrates a template1-era source via --source-database', async () => {
+    const source = join(dir, 'legacy-source');
+    const legacy = new PGlite(source, { database: 'template1' });
+    await legacy.exec(SCHEMA_SQL);
+    await legacy.exec(SEED_SQL);
+    await legacy.close();
+
+    const target = await seedDir('target', SCHEMA_SQL);
+
+    // Without the flag the CLI opens the default database and finds no tables.
+    const bare = await run([source, target], io);
+    expect(bare).toBe(0);
+    expect(err.join('\n')).toContain('Done: 0 rows across 0 tables');
+
+    err = [];
+    const code = await run([source, target, '--source-database', 'template1'], io);
+
+    expect(code).toBe(0);
+    expect(err.join('\n')).toContain('Done: 4 rows across 2 tables, 2 sequences aligned.');
   }, 30_000);
 
   it('stays quiet about per-table validation detail when everything matches', async () => {

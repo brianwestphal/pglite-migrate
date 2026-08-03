@@ -51,6 +51,20 @@ pglite-migrate ./old-data ./new-data --source-engine pglite-old --fetch-missing-
 
 It's opt-in, an installed engine always wins, and the engine is cached for later runs (`--engine-cache ephemeral` to clean up instead). See [engine acquisition](docs/15-engine-acquisition.md).
 
+**Data in a non-default database?** PGlite 0.4.0 moved the default working database from `template1` to `postgres`, so a cluster written by an older PGlite keeps its tables somewhere a plain open never looks — every query then fails with `relation "…" does not exist` even though the data is fine. Pass the engine's own constructor options through:
+
+```ts
+const source = await openDataDir('/path/to/old-data', 'pglite-old', {
+  pgliteOptions: { database: 'template1' },
+});
+```
+
+```bash
+pglite-migrate ./old-data ./new-data --source-database template1
+```
+
+See [engine construction options](docs/18-engine-construction-options.md).
+
 ## Quick start (library, app-driven)
 
 The recommended path. Your app already knows how to create its own schema, so let it: create the schema on the new engine, then transfer the data.
@@ -87,6 +101,7 @@ pglite-migrate <source-data-dir> <target-data-dir> [options]
 | Option | Description |
 | --- | --- |
 | `--source-engine <pkg>` / `--target-engine <pkg>` | npm module/alias for each engine (default `@electric-sql/pglite`) |
+| `--source-database <db>` / `--target-database <db>` | Database to open inside each cluster (PGlite's own default otherwise) |
 | `--fetch-missing-engine` | Download a pinned engine when the named one is not installed (off by default) |
 | `--engine-cache <mode>` | Retention for a downloaded engine: `keep` \| `ephemeral` (default `keep`) |
 | `--engine-cache-dir <path>` | Where to store downloaded engines (default: an OS cache directory) |

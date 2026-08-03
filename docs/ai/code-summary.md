@@ -22,7 +22,7 @@ src/
   backup.ts       backupDataDir(dir, {backupDir,timestamp,keep}): verified, timestamped copy of a data dir (rollback); keep prunes oldest .bak-* siblings
   swap.ts         swapIntoPlace(canonical, new): atomic write-new-then-rename swap primitive
   reconstruct.ts  reconstructSchema(source, target, {onUnsupported}): rebuild app-class DDL via pg_get_*def (standalone mode); schemas → custom types → sequences(+params) → tables → OWNED BY → constraints → indexes; onUnsupported 'error' throws before any DDL. reconstructCustomTypes emits enums+domains+composites+ranges in ONE pg_type.oid-ordered pass (OID order IS dependency order — docs 16/17). detectUnsupported is table-driven (DETECTORS) and covers every remaining NG-9.10 class
-  loader.ts       openDataDir(dir, modulePath, options): open a data dir with a chosen PGlite package/alias; resolve-first, then optional acquisition; absolute paths go through pathToFileURL
+  loader.ts       openDataDir(dir, modulePath, options): open a data dir with a chosen PGlite package/alias; resolve-first, then optional acquisition; absolute paths go through pathToFileURL. OpenOptions.pgliteOptions is forwarded verbatim as the PGlite constructor's 2nd arg on BOTH construction sites via construct() (PGLM-100 — chiefly `{database:'template1'}` for pre-0.4.0 clusters); omitting it constructs with one argument, not an explicit undefined
   version.ts      readClusterVersion(dataDir): read PG_VERSION without booting the cluster; readEngineMajor(db): ask a running engine which major it IS
   precheck.ts     assertEngineMatchesDataDir(db, {dataDir, expectedMajor, side, engine}): fail early when an engine can't serve the dir; exports EngineMismatchError. expectedMajor must be the PRE-open PG_VERSION (a fresh dir is initialized at the engine's own major, so a post-open read is vacuous); null skips without querying
   engines.ts      Second public entry point (`pglite-migrate/engines`) — the opt-in acquisition API; the ONLY network surface
@@ -30,7 +30,7 @@ src/
     registry.ts   Pinned Postgres-major → PGlite version + sha512 table; resolveEngine / knownMajors / UnknownMajorError
     acquire.ts    acquireEngine(major) / acquireRelease(release): download → verify pinned hash → extract → resolveEntry; cache 'keep' (default) | 'ephemeral'
     tar.ts        extractTarGz: hand-rolled, zero-dep, security-hardened (refuses links/devices/traversal/bad checksums; ignores archive modes)
-  cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run. reportValidation prints per-table/per-sequence detail on failure only
+  cli.ts          pglite-migrate bin; exports parseArgs + run(argv, io) + CliIO; entry-guarded so importing it does not auto-run. reportValidation prints per-table/per-sequence detail on failure only (incl. missingColumns). --source-database/--target-database map to pgliteOptions.database (PGLM-100)
 tests/
   topo / version / ident / catalog / fsutil .test.ts   Pure unit tests (catalog: tableKey/objectKey/systemSchemaFilter/regclassLiteral + countRows/hasRows; fsutil: exists/sanitizedTimestamp/errorCode)
   introspect(.edge).test.ts              Introspection (basic + edge: multi-schema, dropped/qualified FK/composite, generated/identity, type qualifiers)
@@ -39,7 +39,7 @@ tests/
   validate.test.ts                       counts / full-digest / sequence checks + column layout (PGLM-99: reordered columns pass, target-only reported, source-only fails, swapped values + real drift still fail, zero-column table, counts stays column-free)
   backup.test.ts / swap.test.ts          Backup copy+verify (incl. PG_VERSION/file-count mismatch, no-PG_VERSION dir); atomic swap + crash-before-swap + EXDEV/restore-on-failure (fs mocked) + SEQUENTIAL swaps (swap→swap, same-second collision, retry-after-restore, keepOld:false→swap)
   reconstruct.test.ts                    Standalone DDL rebuild + unsupported-object reporting + audit regressions (multi-schema, sequence params, OWNED BY) + custom types (domains w/ enforced CHECKs, composites, COLLATE, cross-kind ordering, range still reported)
-  loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle); parseArgs + run() over real temp dirs (incl. engine/dir major mismatch)
+  loader.test.ts / cli.test.ts           openDataDir (resolve-first, missing-engine errors, acquired-engine lifecycle, pgliteOptions on BOTH paths + the template1 bug and its negative); parseArgs + run() over real temp dirs (incl. engine/dir major mismatch, --source-database migrating a template1-era cluster)
   precheck.test.ts                       readEngineMajor + assertEngineMatchesDataDir: match, mismatch, unpinned major, no-PG_VERSION skip (asserts NO query is issued), refusing engine
   engines/registry.test.ts               Pinned table: lookup, unknown major, one-release-per-major, `15devel` parse
   engines/tar.test.ts                    Extractor + hostile archives (traversal, links, devices, bad checksum, pax/GNU overrides)
@@ -54,7 +54,7 @@ tests/
   e2e/column-drift.test.ts               The app-driven layout case (PGLM-99): target declares the same columns in a different order + one extra; `full` passes, extraColumns reported, real drift still fails
   e2e/acquired-engine.test.ts            Migration whose SOURCE engine is downloaded, not installed. The only network-dependent suite — self-gates and ctx.skip()s offline
   e2e/engine-mismatch.test.ts            Real PG18 engine on a real PG17 dir: the precheck's actionable error replaces PGlite's opaque init failure
-docs/                 Requirements (1–17), ARCHITECTURE.md, ai/ summaries
+docs/                 Requirements (1–18), ARCHITECTURE.md, ai/ summaries
 ```
 
 ## Public API (`src/index.ts`)
@@ -92,7 +92,7 @@ docs/                 Requirements (1–17), ARCHITECTURE.md, ai/ summaries
 - **…change standalone schema rebuild** → `src/reconstruct.ts`
 - **…change backup / atomic swap** → `src/backup.ts` / `src/swap.ts`
 - **…add a CLI flag** → `src/cli.ts`
-- **…open an engine version / alias** → `src/loader.ts`; **…detect major version** → `src/version.ts`
+- **…open an engine version / alias, or pass options to the PGlite constructor** → `src/loader.ts`; **…detect major version** → `src/version.ts`
 - **…pin a new Postgres major's engine** → `src/engines/registry.ts` (verify empirically first — download, hash, boot, read `server_version`)
 - **…change downloading / caching an engine** → `src/engines/acquire.ts`; **…change archive-extraction safety** → `src/engines/tar.ts`
 - **…add/adjust types** → `src/types.ts`

@@ -75,10 +75,19 @@ export function makeTgz(entries: TarEntry[]): Buffer {
  * exists so the acquire-then-open path can be exercised without the network.
  */
 export function makeFakeEngineTgz(): Buffer {
+  // `argc` records how many arguments the loader actually passed, so a test can
+  // tell "no options" apart from "an explicit undefined" (PGLM-100).
   const source = [
     'export class PGlite {',
-    '  constructor(dataDir) { this.dataDir = dataDir; this.closed = false; }',
-    '  async query(sql) { return { rows: [{ sql, dataDir: this.dataDir }] }; }',
+    '  constructor(dataDir, options) {',
+    '    this.dataDir = dataDir;',
+    '    this.options = options;',
+    '    this.argc = arguments.length;',
+    '    this.closed = false;',
+    '  }',
+    '  async query(sql) {',
+    '    return { rows: [{ sql, dataDir: this.dataDir, options: this.options, argc: this.argc }] };',
+    '  }',
     '  async exec() { return undefined; }',
     '  async close() { this.closed = true; }',
     '}',

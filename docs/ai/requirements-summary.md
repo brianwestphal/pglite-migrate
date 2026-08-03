@@ -37,6 +37,7 @@ The PGLM-74 audit found four gaps (reproduced against a real PGlite pair); **all
 - FR-4.2a engine-acquisition flags — **Shipped** (`--fetch-missing-engine`, `--engine-cache`, `--engine-cache-dir`; PGLM-65, doc 15)
 - NG-4.8 two-engine cross-major wiring — **Shipped/verified**, including the genuine cross-major refusal: the aliases now resolve to PG17 (0.4.3) / PG18 (0.5.3) and `tests/e2e/cross-major.test.ts` asserts a PG18 engine refuses a PG17 dir (PGLM-19, PGLM-9). Installing both engines is **no longer the only option** — acquisition can supply the missing side (doc 15)
 - FR-4.7 engine/data-directory major precheck — **Shipped** (PGLM-68). Compares the engine's own major against the **pre-open** `PG_VERSION`; names both majors + the install line from the pinned registry instead of PGlite's opaque init failure. Skipped when there is no `PG_VERSION`, and for the target under `--dry-run` (FR-12.1). Also fixed a latent defect: a failing `close()` in the CLI's `finally` used to append a second error and bypass `run()`'s exit code.
+- FR-4.2b database selection — **Shipped** (`--source-database` / `--target-database`; PGLM-100, doc 18). Needed for a cluster written before PGlite 0.4.0 moved the default working database from `template1` to `postgres`; without it such a source opens empty and migrates 0 rows *successfully*, which reads as data loss and is not
 - NG-4.9 dry-run/backup/validate flags — **Shipped** (`--dry-run`, `--backup`/`--backup-dir`, `--validate`, `--on-existing`)
 
 ## 5 — Safety & Rollback (`docs/5-safety-and-rollback.md`) — Shipped
@@ -59,6 +60,19 @@ Opt-in downloading of a missing engine, so a host that bundles only the destinat
 - FR-15.25–15.27 CLI flags, either side may acquire, acquisition reported to stderr — **Shipped**
 
 Known limitations recorded in the doc: offline/air-gapped/proxied runs gain a new failure mode (mitigated by opt-in default); packaged apps must point `cacheDir` somewhere writable; only pinned majors can be acquired.
+
+## 18 — Engine Construction Options (`docs/18-engine-construction-options.md`) — Shipped
+
+`openDataDir` had no way to reach PGlite's own constructor options, so a host with non-default options could not use it at all and had to hand-roll import + construction (PGLM-100).
+
+- FR-18.1 `OpenOptions.pgliteOptions`, forwarded verbatim as the constructor's 2nd argument — **Shipped**
+- FR-18.2 applied on **both** construction sites (resolved *and* acquired) — **Shipped**, one test per path; fixing one and missing the other is the easy mistake
+- FR-18.3 omitting it constructs with a **single argument**, not an explicit `undefined` — **Shipped**, pinned via `arguments.length`
+- FR-18.4 `--source-database` / `--target-database` — **Shipped**; the run test asserts the flagless case transfers **0 rows and exits 0**, i.e. the failure mode is a silent success
+- NFR-18.5/18.6 typed `Record<string, unknown>` (no coupling to a PGlite version, since two majors are open at once) under a distinct key that cannot collide with this library's own options — **Shipped**
+- NG-18.7 no connection-string/DSN parsing; NG-18.8 no auto-detection of a `template1`-era cluster — **deliberate**
+
+Deferred: a general `--source-option k=v` for the non-string options (`relaxedDurability`, `debug`) — needs a value-coercion policy, so only `database` ships.
 
 ## 7–14 — Detailed feature specs — Implemented
 
